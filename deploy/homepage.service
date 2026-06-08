@@ -1,0 +1,17 @@
+[Unit]
+Description=Homepage (反向代理路由门户 + 用户/活跃记录管理)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wyw/homepage/web
+ExecStart=/home/wyw/miniconda3/envs/homepage/bin/python /home/wyw/homepage/web/app.py --config /home/wyw/homepage/config.toml
+Restart=always
+RestartSec=5
+User=root
+StandardOutput=append:/var/log/homepage-web.log
+StandardError=append:/var/log/homepage-web.log
+
+[Install]
+WantedBy=multi-user.target

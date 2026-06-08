@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>403 · Homepage</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="errpage">
+  <div class="code">403</div>
+  <div class="msg">你没有访问{% if route %}「{{ route }}」{% endif %}该路由的权限。<br>如需开通，请联系管理员（admin）。</div>
+  <a class="btn" href="/">返回首页</a>
+</div>
+</body>
+</html>

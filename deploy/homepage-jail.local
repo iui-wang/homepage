@@ -1,0 +1,10 @@
+# fail2ban jail：1 小时内累计 5 次登录失败 → 封该 IP 的 80 端口 24 小时。
+[homepage-auth]
+enabled  = true
+filter   = homepage-auth
+logpath  = /home/wyw/homepage/logs/auth.log
+port     = 80
+protocol = tcp
+findtime = 3600
+maxretry = 5
+bantime  = 86400

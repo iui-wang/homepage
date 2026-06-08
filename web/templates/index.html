@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homepage</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body data-admin="{{ '1' if is_admin else '0' }}">
+<nav class="topbar">
+  <div class="brand"><span class="logo"></span> Homepage</div>
+  <div class="tabs">
+    <div class="tab on" data-tab="routes">路由</div>
+    {% if is_admin %}
+    <div class="tab" data-tab="users">用户管理</div>
+    <div class="tab" data-tab="active">活跃记录</div>
+    <div class="tab" data-tab="config">配置</div>
+    {% endif %}
+    <div class="tab" data-tab="me">我的</div>
+  </div>
+  <div class="me">
+    <span class="uname">{{ username }}</span>
+    {% if is_admin %}<span class="badge-admin">admin</span>{% endif %}
+    <span class="logout" onclick="location.href='/logout'">退出</span>
+  </div>
+</nav>
+
+<div class="wrap">
+  <!-- 路由 -->
+  <section class="pane on" id="pane-routes">
+    <div class="h2">选择要访问的网站</div>
+    <div class="route-grid" id="routeGrid"><div class="muted">加载中…</div></div>
+  </section>
+
+  {% if is_admin %}
+  <!-- 用户管理 -->
+  <section class="pane" id="pane-users">
+    <div class="h2">用户管理</div>
+    <div class="card">
+      <div class="row">
+        <div class="fg" style="flex:1; min-width:160px"><label>用户名</label><input type="text" id="nuUser" placeholder="2~32 位字母/数字/._-"></div>
+        <div class="fg" style="flex:1; min-width:160px"><label>初始密码</label><input type="password" id="nuPass" placeholder="需含大小写+数字+特殊符号，>8位"></div>
+        <button class="btn primary" id="nuAdd">添加用户</button>
+      </div>
+      <div class="form-err" id="nuErr"></div>
+    </div>
+    <table id="userTable"><thead><tr><th>用户名</th><th>角色</th><th>可见路由</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <!-- 活跃记录 -->
+  <section class="pane" id="pane-active">
+    <div class="h2">用户最后活跃时间</div>
+    <table id="lastTable"><thead><tr><th>用户名</th><th>最后一次请求时间</th></tr></thead><tbody></tbody></table>
+    <div class="h2" style="margin-top:22px">请求明细</div>
+    <div class="card">
+      <div class="row">
+        <div class="fg" style="min-width:200px"><label>按用户名过滤</label>
+          <select id="logFilter"><option value="">全部用户</option></select>
+        </div>
+      </div>
+    </div>
+    <table id="logTable"><thead><tr><th>时间</th><th>用户名</th><th>IP</th><th>方法</th><th>路径</th></tr></thead><tbody></tbody></table>
+    <div class="pager">
+      <button class="btn sm" id="logPrev">上一页</button>
+      <span class="pinfo" id="logInfo"></span>
+      <button class="btn sm" id="logNext">下一页</button>
+    </div>
+  </section>
+
+  <!-- 配置 -->
+  <section class="pane" id="pane-config">
+    <div class="h2">会话设置</div>
+    <div class="card">
+      <div class="row">
+        <div class="fg" style="width:180px"><label>登录会话有效期（天）</label><input type="number" id="sessDays" min="1" max="3650"></div>
+        <button class="btn primary" id="sessSave">保存</button>
+      </div>
+      <div class="form-ok" id="sessMsg"></div>
+    </div>
+    <div class="h2" style="margin-top:22px">路由与上游</div>
+    <div class="card">
+      <div class="row">
+        <div class="fg" style="width:150px"><label>路由 key（路径前缀）</label><input type="text" id="nrKey" placeholder="如 bill"></div>
+        <div class="fg" style="flex:1; min-width:160px"><label>显示名（大名）</label><input type="text" id="nrName"></div>
+        <div class="fg" style="width:150px"><label>上游 host</label><input type="text" id="nrHost" value="127.0.0.1"></div>
+        <div class="fg" style="width:110px"><label>上游 port</label><input type="number" id="nrPort"></div>
+        <button class="btn primary" id="nrAdd">添加路由</button>
+      </div>
+      <div class="form-err" id="nrErr"></div>
+    </div>
+    <table id="routeTable"><thead><tr><th>key</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>操作</th></tr></thead><tbody></tbody></table>
+  </section>
+  {% endif %}
+
+  <!-- 我的 -->
+  <section class="pane" id="pane-me">
+    <div class="h2">我的</div>
+    <div class="card" style="max-width:420px">
+      <div class="muted" style="margin-bottom:14px">当前用户：<b>{{ username }}</b></div>
+      <div class="fg" style="margin-bottom:12px"><label>原密码</label><input type="password" id="cpOld"></div>
+      <div class="fg" style="margin-bottom:12px"><label>新密码</label><input type="password" id="cpNew" placeholder="需含大小写+数字+特殊符号，>8位"></div>
+      <div class="fg" style="margin-bottom:12px"><label>确认新密码</label><input type="password" id="cpNew2"></div>
+      <div class="form-err" id="cpErr"></div>
+      <div class="form-ok" id="cpOk"></div>
+      <button class="btn primary" id="cpSave">修改密码</button>
+    </div>
+  </section>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

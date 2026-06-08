@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>登录 · Homepage</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="login-bg">
+  <form class="login-box" id="loginForm" autocomplete="off">
+    <div class="title"><span class="logo" style="width:24px;height:24px;border-radius:7px;background:linear-gradient(135deg,#3b6ef5,#7aa2ff)"></span> Homepage</div>
+    <div class="sub">请登录以访问路由门户</div>
+    <div class="fg">
+      <label for="username">用户名</label>
+      <input type="text" id="username" name="username" autocomplete="username" autofocus>
+    </div>
+    <div class="fg">
+      <label for="password">密码</label>
+      <input type="password" id="password" name="password" autocomplete="current-password">
+    </div>
+    <div class="form-err" id="err"></div>
+    <button type="submit" class="btn primary">登录</button>
+  </form>
+</div>
+<script>
+const params = new URLSearchParams(location.search);
+const nextUrl = params.get("next") || "/";
+document.getElementById("loginForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const username = document.getElementById("username").value.trim();
+  const password = document.getElementById("password").value;
+  const errEl = document.getElementById("err");
+  errEl.textContent = "";
+  const resp = await fetch("/login", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({username, password}),
+  });
+  const data = await resp.json().catch(() => ({}));
+  if (resp.ok && data.ok) {
+    location.href = nextUrl;
+  } else {
+    const msg = data.error || "登录失败";
+    errEl.textContent = msg;
+    alert(msg);
+  }
+});
+</script>
+</body>
+</html>
