@@ -171,6 +171,7 @@ async function loadRouteTable() {
       <td><input type="text" class="rt-name" value="${esc(r.display_name)}"></td>
       <td><input type="text" class="rt-host" value="${esc(r.upstream_host)}"></td>
       <td><input type="number" class="rt-port" value="${esc(r.upstream_port)}" style="width:90px"></td>
+      <td style="text-align:center"><input type="checkbox" class="rt-strip" ${r.strip_prefix ? "checked" : ""}></td>
       <td><button class="btn sm primary" data-save="${r.id}">保存</button>
           <button class="btn sm danger" data-del="${r.id}">删除</button></td></tr>`).join("");
   tb.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", async () => {
@@ -179,6 +180,7 @@ async function loadRouteTable() {
       display_name: tr.querySelector(".rt-name").value.trim(),
       upstream_host: tr.querySelector(".rt-host").value.trim(),
       upstream_port: parseInt(tr.querySelector(".rt-port").value, 10),
+      strip_prefix: tr.querySelector(".rt-strip").checked,
     };
     const { ok, data } = await api(`/api/routes/${b.dataset.save}`, {
       method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -200,6 +202,7 @@ function bindRouteAdd() {
       display_name: document.getElementById("nrName").value.trim(),
       upstream_host: document.getElementById("nrHost").value.trim(),
       upstream_port: parseInt(document.getElementById("nrPort").value, 10),
+      strip_prefix: document.getElementById("nrStrip").checked,
     };
     const { ok, data } = await api("/api/routes", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
@@ -208,6 +211,7 @@ function bindRouteAdd() {
       document.getElementById("nrKey").value = "";
       document.getElementById("nrName").value = "";
       document.getElementById("nrPort").value = "";
+      document.getElementById("nrStrip").checked = false;
       loadRouteTable();
     } else { err.textContent = (data && data.error) || "添加失败"; }
   });

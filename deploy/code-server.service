@@ -1,0 +1,16 @@
+[Unit]
+Description=code-server (wyw, 仅环回，经 homepage 反代 /code 暴露)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=wyw
+Group=wyw
+WorkingDirectory=/home/wyw
+ExecStart=/usr/bin/code-server --bind-addr 127.0.0.1:8090 --auth none /home/wyw
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

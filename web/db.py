@@ -55,6 +55,7 @@ def init_db(admin_initial_password: str) -> None:
             display_name  TEXT NOT NULL,
             upstream_host TEXT NOT NULL,
             upstream_port INTEGER NOT NULL,
+            strip_prefix  INTEGER NOT NULL DEFAULT 0,
             sort_order    INTEGER NOT NULL DEFAULT 0,
             created_at    TEXT NOT NULL
         );
@@ -103,6 +104,13 @@ def init_db(admin_initial_password: str) -> None:
             "INSERT INTO settings(key, value) VALUES('session_days', ?)",
             (str(DEFAULT_SESSION_DAYS),),
         )
+
+    # 为已存在的旧数据库补列（新建库已在 CREATE TABLE 里包含）。
+    try:
+        conn.execute("ALTER TABLE routes ADD COLUMN strip_prefix INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # 列已存在，忽略
 
     conn.commit()
     conn.close()
@@ -202,7 +210,7 @@ def set_user_routes(user_id: int, route_keys: list[str]) -> None:
 def list_routes() -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, key, display_name, upstream_host, upstream_port, sort_order "
+        "SELECT id, key, display_name, upstream_host, upstream_port, strip_prefix, sort_order "
         "FROM routes ORDER BY sort_order, id"
     ).fetchall()
     conn.close()
@@ -246,23 +254,23 @@ def user_can_see_route(user_id: int, is_admin: bool, key: str) -> bool:
     return row is not None
 
 
-def add_route(key: str, display_name: str, host: str, port: int) -> None:
+def add_route(key: str, display_name: str, host: str, port: int, strip_prefix: bool = False) -> None:
     conn = get_conn()
     nxt = conn.execute("SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM routes").fetchone()["n"]
     conn.execute(
-        "INSERT INTO routes(key, display_name, upstream_host, upstream_port, sort_order, created_at) "
-        "VALUES(?,?,?,?,?,?)",
-        (key, display_name, host, port, nxt, _now()),
+        "INSERT INTO routes(key, display_name, upstream_host, upstream_port, strip_prefix, sort_order, created_at) "
+        "VALUES(?,?,?,?,?,?,?)",
+        (key, display_name, host, port, int(strip_prefix), nxt, _now()),
     )
     conn.commit()
     conn.close()
 
 
-def update_route(route_id: int, display_name: str, host: str, port: int) -> None:
+def update_route(route_id: int, display_name: str, host: str, port: int, strip_prefix: bool = False) -> None:
     conn = get_conn()
     conn.execute(
-        "UPDATE routes SET display_name=?, upstream_host=?, upstream_port=? WHERE id=?",
-        (display_name, host, port, route_id),
+        "UPDATE routes SET display_name=?, upstream_host=?, upstream_port=?, strip_prefix=? WHERE id=?",
+        (display_name, host, port, int(strip_prefix), route_id),
     )
     conn.commit()
     conn.close()

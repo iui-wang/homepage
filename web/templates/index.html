@@ -84,11 +84,12 @@
         <div class="fg" style="flex:1; min-width:160px"><label>显示名（大名）</label><input type="text" id="nrName"></div>
         <div class="fg" style="width:150px"><label>上游 host</label><input type="text" id="nrHost" value="127.0.0.1"></div>
         <div class="fg" style="width:110px"><label>上游 port</label><input type="number" id="nrPort"></div>
+        <div class="fg" style="width:80px;align-self:flex-end"><label><input type="checkbox" id="nrStrip"> 剥前缀</label></div>
         <button class="btn primary" id="nrAdd">添加路由</button>
       </div>
       <div class="form-err" id="nrErr"></div>
     </div>
-    <table id="routeTable"><thead><tr><th>key</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>操作</th></tr></thead><tbody></tbody></table>
+    <table id="routeTable"><thead><tr><th>key</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>剥前缀</th><th>操作</th></tr></thead><tbody></tbody></table>
   </section>
   {% endif %}
 

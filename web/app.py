@@ -294,6 +294,7 @@ def _validate_route_payload(data, *, require_key):
     name = (data.get("display_name") or "").strip()
     host = (data.get("upstream_host") or "").strip()
     port = data.get("upstream_port")
+    strip_prefix = bool(data.get("strip_prefix", False))
     if require_key:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", key):
             return None, "路由 key 需为 1~40 位字母/数字/_-"
@@ -309,7 +310,7 @@ def _validate_route_payload(data, *, require_key):
         return None, "上游 port 必须是整数"
     if not (1 <= port <= 65535):
         return None, "上游 port 取值 1~65535"
-    return {"key": key, "display_name": name, "upstream_host": host, "upstream_port": port}, None
+    return {"key": key, "display_name": name, "upstream_host": host, "upstream_port": port, "strip_prefix": strip_prefix}, None
 
 
 @app.route("/api/routes", methods=["POST"])
@@ -321,7 +322,7 @@ def api_add_route():
         return jsonify({"error": err}), 400
     if db.get_route_by_key(payload["key"]) is not None:
         return jsonify({"error": "路由 key 已存在"}), 400
-    db.add_route(payload["key"], payload["display_name"], payload["upstream_host"], payload["upstream_port"])
+    db.add_route(payload["key"], payload["display_name"], payload["upstream_host"], payload["upstream_port"], payload["strip_prefix"])
     return jsonify({"ok": True})
 
 
@@ -332,7 +333,7 @@ def api_update_route(route_id):
     payload, err = _validate_route_payload(data, require_key=False)
     if err:
         return jsonify({"error": err}), 400
-    db.update_route(route_id, payload["display_name"], payload["upstream_host"], payload["upstream_port"])
+    db.update_route(route_id, payload["display_name"], payload["upstream_host"], payload["upstream_port"], payload["strip_prefix"])
     return jsonify({"ok": True})
 
 
@@ -403,7 +404,12 @@ def proxy(fullpath):
 
     maybe_log_active(g.user["username"])
 
-    target = f"http://{route['upstream_host']}:{route['upstream_port']}{request.path}"
+    # strip_prefix 路由（如 code-server）需要剥掉 /<key> 前缀再转发。
+    path = request.path
+    if route["strip_prefix"]:
+        path = path[len(key) + 1:] or "/"
+
+    target = f"http://{route['upstream_host']}:{route['upstream_port']}{path}"
     if request.query_string:
         target += "?" + request.query_string.decode("utf-8", "ignore")
 
@@ -459,12 +465,22 @@ def ws_proxy(ws, fullpath):
     if route is None or not db.user_can_see_route(user["id"], user["is_admin"], key):
         return
 
-    target = f"ws://{route['upstream_host']}:{route['upstream_port']}{request.path}"
+    ws_path = request.path
+    if route["strip_prefix"]:
+        ws_path = ws_path[len(key) + 1:] or "/"
+
+    target = f"ws://{route['upstream_host']}:{route['upstream_port']}{ws_path}"
     if request.query_string:
         target += "?" + request.query_string.decode("utf-8", "ignore")
 
+    # 透传客户端请求的子协议，兼容 ttyd（tty）和 code-server（无固定子协议）。
+    proto_header = request.headers.get("Sec-WebSocket-Protocol", "")
+    client_protocols = [p.strip() for p in proto_header.split(",") if p.strip()]
+
     try:
-        upstream = wsclient.create_connection(target, subprotocols=["tty"], timeout=10)
+        upstream = wsclient.create_connection(
+            target, subprotocols=client_protocols or None, timeout=10
+        )
     except Exception as exc:
         logger.warning("WS 上游连接失败 route=%s target=%s err=%s", key, target, exc)
         return
