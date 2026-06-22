@@ -44,13 +44,13 @@
       </div>
       <div class="form-err" id="nuErr"></div>
     </div>
-    <table id="userTable"><thead><tr><th>用户名</th><th>角色</th><th>可见路由</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table>
+    <div class="table-scroll"><table id="userTable"><thead><tr><th>用户名</th><th>角色</th><th>可见路由</th><th>创建时间</th><th>操作</th></tr></thead><tbody></tbody></table></div>
   </section>
 
   <!-- 活跃记录 -->
   <section class="pane" id="pane-active">
     <div class="h2">用户最后活跃时间</div>
-    <table id="lastTable"><thead><tr><th>用户名</th><th>最后一次请求时间</th></tr></thead><tbody></tbody></table>
+    <div class="table-scroll"><table id="lastTable"><thead><tr><th>用户名</th><th>最后一次请求时间</th></tr></thead><tbody></tbody></table></div>
     <div class="h2" style="margin-top:22px">请求明细</div>
     <div class="card">
       <div class="row">
@@ -59,7 +59,7 @@
         </div>
       </div>
     </div>
-    <table id="logTable"><thead><tr><th>时间</th><th>用户名</th><th>IP</th><th>方法</th><th>路径</th></tr></thead><tbody></tbody></table>
+    <div class="table-scroll"><table id="logTable"><thead><tr><th>用户名</th><th>路径</th><th>开始时间</th><th>最后时间</th><th>次数</th><th>IP</th></tr></thead><tbody></tbody></table></div>
     <div class="pager">
       <button class="btn sm" id="logPrev">上一页</button>
       <span class="pinfo" id="logInfo"></span>
@@ -89,13 +89,19 @@
       </div>
       <div class="form-err" id="nrErr"></div>
     </div>
-    <table id="routeTable"><thead><tr><th>key</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>剥前缀</th><th>操作</th></tr></thead><tbody></tbody></table>
+    <div class="table-scroll"><table id="routeTable"><thead><tr><th>key</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>剥前缀</th><th>操作</th></tr></thead><tbody></tbody></table></div>
   </section>
   {% endif %}
 
   <!-- 我的 -->
   <section class="pane" id="pane-me">
     <div class="h2">我的</div>
+    {% if is_admin %}
+    <div class="card" style="max-width:420px">
+      <div class="muted" style="margin-bottom:14px">当前用户：<b>{{ username }}</b></div>
+      <div class="muted">admin 密码通过 <code>config.toml</code> 的 <code>admin_initial_password</code> 字段管理，修改后重启服务生效。</div>
+    </div>
+    {% else %}
     <div class="card" style="max-width:420px">
       <div class="muted" style="margin-bottom:14px">当前用户：<b>{{ username }}</b></div>
       <div class="fg" style="margin-bottom:12px"><label>原密码</label><input type="password" id="cpOld"></div>
@@ -105,6 +111,7 @@
       <div class="form-ok" id="cpOk"></div>
       <button class="btn primary" id="cpSave">修改密码</button>
     </div>
+    {% endif %}
   </section>
 </div>
 

@@ -137,7 +137,8 @@ def maybe_log_active(username: str) -> None:
         return
     if p.lower().endswith(STATIC_EXT):
         return
-    db.log_active(username, request.remote_addr or "-", request.method, p)
+    first_seg = "/" + p.lstrip("/").split("/")[0]
+    db.log_active(username, request.remote_addr or "-", request.method, first_seg)
 
 
 # ---------------- 会话时长 ----------------
@@ -145,7 +146,6 @@ def maybe_log_active(username: str) -> None:
 @app.before_request
 def _make_session_permanent():
     session.permanent = True
-    app.permanent_session_lifetime = timedelta(days=_SESSION_DAYS)
 
 
 # ---------------- 登录 / 登出 ----------------
@@ -218,6 +218,8 @@ def api_me():
 @app.route("/api/change-password", methods=["POST"])
 @login_required
 def api_change_password():
+    if g.user["is_admin"]:
+        return jsonify({"error": "admin 密码通过 config.toml 管理，修改后重启服务生效"}), 403
     data = request.get_json(silent=True) or {}
     old = data.get("old_password") or ""
     new = data.get("new_password") or ""
@@ -359,6 +361,7 @@ def api_settings():
         return jsonify({"error": "会话时长取值 1~3650 天"}), 400
     db.set_session_days(days)
     _SESSION_DAYS = days
+    app.permanent_session_lifetime = timedelta(days=days)
     return jsonify({"ok": True})
 
 
@@ -555,6 +558,7 @@ def main() -> None:
 
     _AUTH_LOG_PATH = config["paths"]["auth_log"]
     _SESSION_DAYS = db.get_session_days()
+    app.permanent_session_lifetime = timedelta(days=_SESSION_DAYS)
     app.secret_key = config["security"]["secret_key"]
 
     host = args.host or config["server"]["host"]
@@ -564,6 +568,11 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    # 本文件以 `python app.py` 启动时身份是 __main__。setup_routes_repo() 动态加载的
+    # routes_repo 子模块若 import app，会把本文件重新加载成名为 'app' 的第二份模块，
+    # 导致顶层副作用（如 get_logger）重复执行、logger handler 累积、日志被成倍放大。
+    # 把 'app' 别名到 __main__，让这些子模块复用同一份模块，避免重复加载。
+    sys.modules["app"] = sys.modules["__main__"]
     logger = get_logger("web")
     try:
         main()

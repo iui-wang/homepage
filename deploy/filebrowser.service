@@ -1,0 +1,14 @@
+[Unit]
+Description=File Browser
+After=network.target
+
+[Service]
+Type=simple
+User=wyw
+WorkingDirectory=/home/wyw/filebrowser
+ExecStart=/usr/local/bin/filebrowser --database /home/wyw/filebrowser/filebrowser.db
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

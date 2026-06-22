@@ -69,23 +69,31 @@ def init_db(admin_initial_password: str) -> None:
             value TEXT NOT NULL
         );
         CREATE TABLE IF NOT EXISTS active_log (
-            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            ip       TEXT NOT NULL,
-            method   TEXT NOT NULL,
-            path     TEXT NOT NULL,
-            ts       TEXT NOT NULL
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            username  TEXT NOT NULL,
+            ip        TEXT NOT NULL,
+            method    TEXT NOT NULL,
+            path      TEXT NOT NULL,
+            start_ts  TEXT NOT NULL,
+            end_ts    TEXT NOT NULL,
+            count     INTEGER NOT NULL DEFAULT 1
         );
         CREATE INDEX IF NOT EXISTS idx_active_username ON active_log(username);
         """
     )
 
-    # 种入 admin（不存在时）。
+    # admin 密码以 config.toml 为唯一来源，每次启动都同步。
+    new_hash = generate_password_hash(admin_initial_password)
     row = conn.execute("SELECT id FROM users WHERE username='admin'").fetchone()
     if row is None:
         conn.execute(
             "INSERT INTO users(username, password_hash, is_admin, created_at) VALUES(?,?,1,?)",
-            ("admin", generate_password_hash(admin_initial_password), _now()),
+            ("admin", new_hash, _now()),
+        )
+    else:
+        conn.execute(
+            "UPDATE users SET password_hash=? WHERE username='admin'",
+            (new_hash,),
         )
 
     # 种入默认路由（routes 表为空时）。
@@ -111,6 +119,26 @@ def init_db(admin_initial_password: str) -> None:
         conn.commit()
     except sqlite3.OperationalError:
         pass  # 列已存在，忽略
+
+    # 迁移 active_log：旧表用 ts 单列，新表改为 start_ts/end_ts/count，同时清空历史数据。
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(active_log)").fetchall()}
+    if "ts" in cols and "start_ts" not in cols:
+        conn.executescript(
+            """
+            DROP TABLE IF EXISTS active_log;
+            CREATE TABLE active_log (
+                id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                username  TEXT NOT NULL,
+                ip        TEXT NOT NULL,
+                method    TEXT NOT NULL,
+                path      TEXT NOT NULL,
+                start_ts  TEXT NOT NULL,
+                end_ts    TEXT NOT NULL,
+                count     INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_active_username ON active_log(username);
+            """
+        )
 
     conn.commit()
     conn.close()
@@ -287,14 +315,28 @@ def delete_route(route_id: int) -> None:
 
 def log_active(username: str, ip: str, method: str, path: str) -> None:
     conn = get_conn()
+    now = _now()
+    # 合并键含 ip+method，避免不同来源/方法的请求被错并到一条；
+    # 窗口以 start_ts 为基准（而非 end_ts），单条记录最长只覆盖 60 秒，防止持续活跃时被无限拉长。
+    row = conn.execute(
+        "SELECT id, start_ts FROM active_log "
+        "WHERE username=? AND path=? AND ip=? AND method=? ORDER BY id DESC LIMIT 1",
+        (username, path, ip, method),
+    ).fetchone()
+    if row:
+        delta = datetime.strptime(now, "%Y-%m-%d %H:%M:%S") - datetime.strptime(row["start_ts"], "%Y-%m-%d %H:%M:%S")
+        if 0 <= delta.total_seconds() <= 60:
+            conn.execute("UPDATE active_log SET end_ts=?, count=count+1 WHERE id=?", (now, row["id"]))
+            conn.commit()
+            conn.close()
+            return
     conn.execute(
-        "INSERT INTO active_log(username, ip, method, path, ts) VALUES(?,?,?,?,?)",
-        (username, ip, method, path, _now()),
+        "INSERT INTO active_log(username, ip, method, path, start_ts, end_ts, count) VALUES(?,?,?,?,?,?,1)",
+        (username, ip, method, path, now, now),
     )
     # 维持封顶：删掉超出 MAX_ACTIVE_LOG 的最旧记录。
     conn.execute(
-        "DELETE FROM active_log WHERE id <= "
-        "(SELECT MAX(id) FROM active_log) - ?",
+        "DELETE FROM active_log WHERE id <= (SELECT MAX(id) FROM active_log) - ?",
         (MAX_ACTIVE_LOG,),
     )
     conn.commit()
@@ -305,7 +347,7 @@ def last_seen_per_user() -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
         "SELECT u.username, "
-        "(SELECT MAX(a.ts) FROM active_log a WHERE a.username=u.username) AS last_ts "
+        "(SELECT MAX(a.end_ts) FROM active_log a WHERE a.username=u.username) AS last_ts "
         "FROM users u ORDER BY u.username"
     ).fetchall()
     conn.close()
@@ -322,7 +364,7 @@ def query_active_log(username: str | None, page: int, per_page: int) -> dict:
     total = conn.execute(f"SELECT COUNT(*) AS c FROM active_log {where}", params).fetchone()["c"]
     offset = (page - 1) * per_page
     rows = conn.execute(
-        f"SELECT username, ip, method, path, ts FROM active_log {where} "
+        f"SELECT username, ip, method, path, start_ts, end_ts, count FROM active_log {where} "
         "ORDER BY id DESC LIMIT ? OFFSET ?",
         params + [per_page, offset],
     ).fetchall()

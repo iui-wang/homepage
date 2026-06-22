@@ -125,8 +125,8 @@ async function loadActiveLog() {
   logTotal = data.total;
   const tb = document.querySelector("#logTable tbody");
   tb.innerHTML = data.rows.length
-    ? data.rows.map((r) => `<tr><td class="muted">${esc(r.ts)}</td><td>${esc(r.username)}</td><td>${esc(r.ip)}</td><td>${esc(r.method)}</td><td>${esc(r.path)}</td></tr>`).join("")
-    : '<tr><td colspan="5" class="muted">暂无记录</td></tr>';
+    ? data.rows.map((r) => `<tr><td>${esc(r.username)}</td><td>${esc(r.path)}</td><td class="muted">${esc(r.start_ts)}</td><td class="muted">${esc(r.end_ts)}</td><td>${esc(String(r.count))}</td><td class="muted">${esc(r.ip)}</td></tr>`).join("")
+    : '<tr><td colspan="6" class="muted">暂无记录</td></tr>';
   const pages = Math.max(1, Math.ceil(logTotal / data.per_page));
   document.getElementById("logInfo").textContent = `第 ${logPage} / ${pages} 页 · 共 ${logTotal} 条`;
   document.getElementById("logPrev").disabled = logPage <= 1;
@@ -251,4 +251,4 @@ const LOADERS = {
 loaded.routes = true;
 loadRoutes();
 if (IS_ADMIN) bindUserAdd();
-bindChangePassword();
+if (!IS_ADMIN) bindChangePassword();

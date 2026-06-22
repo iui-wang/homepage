@@ -1,6 +1,22 @@
+"""单例 logger：文件（每日滚动，保留 14 天）+ 控制台。
+
+用法：
+    from logger import get_logger
+    log = get_logger(__name__)
+    log.info("hello")
+
+日志默认写到本文件同级的 logs/ 目录，每个 name 一个 <name>.log。
+如需改目录，设置环境变量 LOG_DIR，或直接改下面的 LOG_DIR。
+"""
+
 import logging
+import os
 import sys
 from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
+
+LOG_DIR = Path(os.environ.get("LOG_DIR") or Path(__file__).resolve().parent / "logs")
+LOG_BACKUP_DAYS = 14
 
 _loggers: dict[str, logging.Logger] = {}
 
@@ -18,9 +34,11 @@ def get_logger(name: str) -> logging.Logger:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     file_handler = TimedRotatingFileHandler(
-        filename=f"{name}.log",
+        filename=str(LOG_DIR / f"{name}.log"),
         when="midnight",
+        backupCount=LOG_BACKUP_DAYS,
         encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)
