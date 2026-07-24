@@ -8,7 +8,7 @@
 </head>
 <body data-admin="{{ '1' if is_admin else '0' }}">
 <nav class="topbar">
-  <div class="brand"><span class="logo"></span> Homepage</div>
+  <div class="brand">Homepage</div>
   <div class="tabs">
     <div class="tab on" data-tab="routes">路由</div>
     {% if is_admin %}
@@ -19,11 +19,29 @@
     <div class="tab" data-tab="me">我的</div>
   </div>
   <div class="me">
+    {% if is_admin %}<span class="metrics-btn" id="metricsBtn" title="机器占用">📈</span>{% endif %}
     <span class="uname">{{ username }}</span>
     {% if is_admin %}<span class="badge-admin">admin</span>{% endif %}
     <span class="logout" onclick="location.href='/logout'">退出</span>
   </div>
 </nav>
+
+{% if is_admin %}
+<div class="modal-mask" id="metricsModal">
+  <div class="modal-box">
+    <div class="modal-head">
+      <span class="modal-title">机器占用</span>
+      <select id="metWindow"></select>
+      <span class="modal-close" id="metClose">✕</span>
+    </div>
+    <div class="modal-body">
+      <div class="metric-chart"><div class="mc-title" id="cpuTitle">CPU 利用率</div><canvas id="cpuCanvas"></canvas></div>
+      <div class="metric-chart"><div class="mc-title" id="memTitle">内存</div><canvas id="memCanvas"></canvas></div>
+      <div class="metric-chart"><div class="mc-title" id="diskTitle">磁盘 /</div><canvas id="diskCanvas"></canvas></div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <div class="wrap">
   <!-- 路由 -->

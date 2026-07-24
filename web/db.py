@@ -1,3 +1,4 @@
+import math
 import sqlite3
 from datetime import datetime
 
@@ -9,12 +10,15 @@ RESERVED_ROUTE_KEYS = {"api", "static", "login", "logout", "favicon.ico", "healt
 # 活跃记录最多保留的条数。
 MAX_ACTIVE_LOG = 100_000
 
+# 机器监控采样间隔（秒）与降采样目标点数（单次查询返回的曲线点上限）。
+METRICS_INTERVAL = 10
+METRICS_MAX_POINTS = 400
+
 # 默认会话时长（天）。
 DEFAULT_SESSION_DAYS = 30
 
 # 首次启动时种入的默认路由：(key, 大名, 上游 host, 上游 port)。
 DEFAULT_ROUTES = [
-    ("ai-buddy", "AI Buddy", "127.0.0.1", 8080),
     ("xiangyun", "博弘翔云1号私募证券投资基金A", "127.0.0.1", 8848),
     ("bill", "账单", "127.0.0.1", 5057),
 ]
@@ -79,6 +83,16 @@ def init_db(admin_initial_password: str) -> None:
             count     INTEGER NOT NULL DEFAULT 1
         );
         CREATE INDEX IF NOT EXISTS idx_active_username ON active_log(username);
+        CREATE TABLE IF NOT EXISTS metrics (
+            ts          INTEGER PRIMARY KEY,
+            cpu_pct     REAL    NOT NULL,
+            mem_pct     REAL    NOT NULL,
+            mem_used    INTEGER NOT NULL,
+            mem_total   INTEGER NOT NULL,
+            disk_pct    REAL    NOT NULL,
+            disk_used   INTEGER NOT NULL,
+            disk_total  INTEGER NOT NULL
+        );
         """
     )
 
@@ -370,3 +384,70 @@ def query_active_log(username: str | None, page: int, per_page: int) -> dict:
     ).fetchall()
     conn.close()
     return {"total": total, "rows": [dict(r) for r in rows]}
+
+
+# ---------- metrics（机器监控） ----------
+
+def insert_metric(
+    ts: int,
+    cpu_pct: float,
+    mem_pct: float,
+    mem_used: int,
+    mem_total: int,
+    disk_pct: float,
+    disk_used: int,
+    disk_total: int,
+) -> None:
+    conn = get_conn()
+    conn.execute(
+        "INSERT OR REPLACE INTO metrics"
+        "(ts, cpu_pct, mem_pct, mem_used, mem_total, disk_pct, disk_used, disk_total) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (ts, cpu_pct, mem_pct, mem_used, mem_total, disk_pct, disk_used, disk_total),
+    )
+    conn.commit()
+    conn.close()
+
+
+def prune_metrics(now_ts: int, retention_days: int) -> None:
+    conn = get_conn()
+    conn.execute("DELETE FROM metrics WHERE ts < ?", (now_ts - retention_days * 86400,))
+    conn.commit()
+    conn.close()
+
+
+def query_metrics(since_ts: int, window_seconds: int) -> dict:
+    """取 [since_ts, now] 窗口内的采样点，按桶取均值降采样到 ≤METRICS_MAX_POINTS 个点。
+
+    桶宽 = max(采样间隔, ceil(窗口/目标点数)) 向上取整到采样间隔的整数倍；
+    短窗（桶宽落回采样间隔）等于原量返回。current 为最近一条原始采样，供标题读绝对值。
+    """
+    bucket = max(METRICS_INTERVAL, math.ceil(window_seconds / METRICS_MAX_POINTS))
+    bucket = math.ceil(bucket / METRICS_INTERVAL) * METRICS_INTERVAL
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT (ts/?)*? AS bts, "
+        "AVG(cpu_pct) AS cpu, AVG(mem_pct) AS mem_pct, "
+        "AVG(mem_used) AS mem_used, MAX(mem_total) AS mem_total, "
+        "AVG(disk_pct) AS disk_pct, AVG(disk_used) AS disk_used, MAX(disk_total) AS disk_total "
+        "FROM metrics WHERE ts >= ? GROUP BY ts/? ORDER BY bts",
+        (bucket, bucket, since_ts, bucket),
+    ).fetchall()
+    current = conn.execute(
+        "SELECT * FROM metrics ORDER BY ts DESC LIMIT 1"
+    ).fetchone()
+    conn.close()
+    points = [
+        {
+            "ts": int(r["bts"]),
+            "cpu": round(r["cpu"], 2),
+            "mem_pct": round(r["mem_pct"], 2),
+            "mem_used": int(r["mem_used"]),
+            "mem_total": int(r["mem_total"]),
+            "disk_pct": round(r["disk_pct"], 2),
+            "disk_used": int(r["disk_used"]),
+            "disk_total": int(r["disk_total"]),
+        }
+        for r in rows
+    ]
+    return {"points": points, "current": dict(current) if current else None, "bucket": bucket}

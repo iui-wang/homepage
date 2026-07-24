@@ -1,0 +1,18 @@
+[Unit]
+Description=Garage Web UI (仅环回，经 homepage 反代 /garage 暴露)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wyw/garage-webui
+Environment="HOST=127.0.0.1"
+Environment="PORT=3909"
+Environment="BASE_PATH=/garage"
+Environment="CONFIG_PATH=/etc/garage.toml"
+ExecStart=/home/wyw/garage-webui/garage-webui
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

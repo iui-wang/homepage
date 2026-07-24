@@ -39,7 +39,6 @@ async function loadRoutes() {
     <div class="route-card" data-key="${esc(r.key)}">
       <div class="rn">${esc(r.display_name)}</div>
       <div class="rk">/${esc(r.key)}</div>
-      <div class="go">点击进入 →</div>
     </div>`).join("");
   grid.querySelectorAll(".route-card").forEach((c) => {
     c.addEventListener("click", () => { location.href = "/" + c.dataset.key + "/"; });
@@ -239,6 +238,157 @@ function bindChangePassword() {
   });
 }
 
+// ---------------- 机器监控 ----------------
+const MET_WINDOWS = [
+  ["1m", "1 分钟"], ["10m", "10 分钟"], ["30m", "30 分钟"], ["1h", "1 小时"],
+  ["3h", "3 小时"], ["1d", "1 天"], ["3d", "3 天"], ["7d", "7 天"],
+];
+
+function fmtBytes(n) {
+  if (n == null) return "—";
+  const g = n / (1024 ** 3);
+  if (g >= 1) return g.toFixed(1) + "G";
+  return (n / (1024 ** 2)).toFixed(0) + "M";
+}
+
+function fmtTime(ts, win) {
+  const d = new Date(ts * 1000);
+  const p = (x) => String(x).padStart(2, "0");
+  const hms = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  if (["1d", "3d", "7d"].includes(win)) return `${p(d.getMonth() + 1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return hms;
+}
+
+// 在指定锚点画一个带底色的读数小标签。anchor: "left"|"right"（相对 x 的对齐）。
+function drawTag(ctx, x, y, text, anchor, color) {
+  ctx.font = "10px sans-serif";
+  const w = ctx.measureText(text).width + 8, h = 14;
+  const bx = anchor === "right" ? x - w : x;
+  const by = Math.max(0, Math.min(y - h / 2, ctx.canvas.clientHeight - h));
+  ctx.fillStyle = color;
+  ctx.fillRect(bx, by, w, h);
+  ctx.fillStyle = "#fff"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.fillText(text, bx + 4, by + h / 2);
+}
+
+class MetricChart {
+  // opts: { valKey, hasRight, usedKey, totalKey }
+  constructor(canvas, color, opts) {
+    this.canvas = canvas; this.color = color; this.opts = opts;
+    this.points = []; this.win = "1h"; this.hoverX = null;
+    canvas.addEventListener("mousemove", (e) => {
+      const r = canvas.getBoundingClientRect();
+      this.hoverX = e.clientX - r.left; this.draw();
+    });
+    canvas.addEventListener("mouseleave", () => { this.hoverX = null; this.draw(); });
+  }
+
+  setData(points, win) { this.points = points; this.win = win; this.hoverX = null; this.draw(); }
+
+  draw() {
+    const cv = this.canvas, dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    if (!W || !H) return;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, W, H);
+
+    const padL = 40, padR = this.opts.hasRight ? 50 : 14, padT = 8, padB = 20;
+    const x0 = padL, y0 = padT, w = W - padL - padR, h = H - padT - padB;
+    const pts = this.points;
+    const total = pts.length ? pts[pts.length - 1][this.opts.totalKey] : 0;
+
+    // 网格 + 左轴（%）/右轴（绝对值）刻度
+    ctx.font = "10px sans-serif"; ctx.textBaseline = "middle"; ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const frac = i / 4, yy = y0 + h - frac * h;
+      ctx.strokeStyle = "#eef0f3";
+      ctx.beginPath(); ctx.moveTo(x0, yy); ctx.lineTo(x0 + w, yy); ctx.stroke();
+      ctx.fillStyle = "#8a8f99"; ctx.textAlign = "right";
+      ctx.fillText((frac * 100).toFixed(0) + "%", x0 - 6, yy);
+      if (this.opts.hasRight && total) {
+        ctx.textAlign = "left"; ctx.fillText(fmtBytes(frac * total), x0 + w + 6, yy);
+      }
+    }
+
+    if (!pts.length) {
+      ctx.fillStyle = "#8a8f99"; ctx.textAlign = "center";
+      ctx.fillText("暂无数据", W / 2, H / 2);
+      return;
+    }
+
+    const ts0 = pts[0].ts, ts1 = pts[pts.length - 1].ts, span = Math.max(1, ts1 - ts0);
+    const px = (ts) => x0 + ((ts - ts0) / span) * w;
+    const py = (v) => y0 + h - (v / 100) * h;
+    const vk = this.opts.valKey;
+
+    // 折线 + 填充
+    ctx.beginPath(); ctx.strokeStyle = this.color; ctx.lineWidth = 1.5;
+    pts.forEach((p, i) => { const X = px(p.ts), Y = py(p[vk]); i ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+    ctx.stroke();
+    ctx.lineTo(px(ts1), y0 + h); ctx.lineTo(px(ts0), y0 + h); ctx.closePath();
+    ctx.fillStyle = this.color + "22"; ctx.fill();
+
+    // x 轴时间标签（起 / 中 / 止）
+    ctx.fillStyle = "#8a8f99"; ctx.textBaseline = "top";
+    [[0, "left"], [Math.floor(pts.length / 2), "center"], [pts.length - 1, "right"]].forEach(([idx, al]) => {
+      ctx.textAlign = al; ctx.fillText(fmtTime(pts[idx].ts, this.win), px(pts[idx].ts), y0 + h + 4);
+    });
+
+    // 悬停准星：竖线交曲线点，向左右轴拉横线并读数
+    if (this.hoverX != null && this.hoverX >= x0 && this.hoverX <= x0 + w) {
+      let best = 0, bd = Infinity;
+      pts.forEach((p, i) => { const d = Math.abs(px(p.ts) - this.hoverX); if (d < bd) { bd = d; best = i; } });
+      const p = pts[best], X = px(p.ts), Y = py(p[vk]);
+      ctx.strokeStyle = "#b0b4bb"; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(X, y0); ctx.lineTo(X, y0 + h); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, Y); ctx.lineTo(x0 + w, Y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = this.color; ctx.beginPath(); ctx.arc(X, Y, 3, 0, Math.PI * 2); ctx.fill();
+      drawTag(ctx, x0 - 1, Y, p[vk].toFixed(1) + "%", "right", this.color);
+      if (this.opts.hasRight) drawTag(ctx, x0 + w + 1, Y, fmtBytes(p[this.opts.usedKey]), "left", this.color);
+    }
+  }
+}
+
+let MET_CHARTS = null, MET_WIN = "1h";
+
+function buildMetricCharts() {
+  MET_CHARTS = [
+    new MetricChart(document.getElementById("cpuCanvas"), "#3b6ef5", { valKey: "cpu", hasRight: false }),
+    new MetricChart(document.getElementById("memCanvas"), "#2f9e44", { valKey: "mem_pct", hasRight: true, usedKey: "mem_used", totalKey: "mem_total" }),
+    new MetricChart(document.getElementById("diskCanvas"), "#e8893b", { valKey: "disk_pct", hasRight: true, usedKey: "disk_used", totalKey: "disk_total" }),
+  ];
+}
+
+async function loadMetrics() {
+  const { data } = await api("/api/metrics?window=" + MET_WIN);
+  if (!data) return;
+  const pts = data.points || [], c = data.current;
+  MET_CHARTS.forEach((ch) => ch.setData(pts, MET_WIN));
+  document.getElementById("cpuTitle").textContent = "CPU 利用率" + (c ? `　${c.cpu_pct.toFixed(1)}%` : "");
+  document.getElementById("memTitle").textContent = "内存" + (c ? `　${c.mem_pct.toFixed(1)}%　${fmtBytes(c.mem_used)}/${fmtBytes(c.mem_total)}` : "");
+  document.getElementById("diskTitle").textContent = "磁盘 /" + (c ? `　${c.disk_pct.toFixed(1)}%　${fmtBytes(c.disk_used)}/${fmtBytes(c.disk_total)}` : "");
+}
+
+function initMetrics() {
+  const modal = document.getElementById("metricsModal");
+  const sel = document.getElementById("metWindow");
+  sel.innerHTML = MET_WINDOWS.map(([v, t]) => `<option value="${v}" ${v === "1h" ? "selected" : ""}>${t}</option>`).join("");
+  document.getElementById("metricsBtn").addEventListener("click", () => {
+    modal.classList.add("on");
+    if (!MET_CHARTS) buildMetricCharts();
+    loadMetrics();
+  });
+  document.getElementById("metClose").addEventListener("click", () => modal.classList.remove("on"));
+  modal.addEventListener("click", (e) => { if (e.target === modal) modal.classList.remove("on"); });
+  sel.addEventListener("change", () => { MET_WIN = sel.value; loadMetrics(); });
+  window.addEventListener("resize", () => {
+    if (modal.classList.contains("on") && MET_CHARTS) MET_CHARTS.forEach((ch) => ch.draw());
+  });
+}
+
 const LOADERS = {
   routes: loadRoutes,
   users: loadUsers,
@@ -250,5 +400,5 @@ const LOADERS = {
 // 初始化：路由页默认加载；绑定一次性事件。
 loaded.routes = true;
 loadRoutes();
-if (IS_ADMIN) bindUserAdd();
+if (IS_ADMIN) { bindUserAdd(); initMetrics(); }
 if (!IS_ADMIN) bindChangePassword();

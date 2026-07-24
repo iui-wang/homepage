@@ -13,8 +13,6 @@ a { color:var(--accent); text-decoration:none; }
           display:flex; align-items:center; gap:16px; padding:0 24px; box-shadow:0 1px 4px rgba(0,0,0,.04); }
 .brand { display:flex; align-items:center; gap:8px; font-size:18px; font-weight:700; letter-spacing:.5px;
          color:var(--ink); padding:11px 0; white-space:nowrap; flex-shrink:0; }
-.brand .logo { width:22px; height:22px; border-radius:6px; background:linear-gradient(135deg,#3b6ef5,#7aa2ff);
-               display:inline-block; flex-shrink:0; }
 .tabs { display:flex; gap:2px; }
 .tab { padding:14px 16px; cursor:pointer; font-size:14px; color:var(--sub); border-bottom:2px solid transparent;
        user-select:none; white-space:nowrap; }
@@ -40,7 +38,6 @@ a { color:var(--accent); text-decoration:none; }
 .route-card:hover { border-color:var(--accent); box-shadow:0 6px 20px rgba(59,110,245,.12); transform:translateY(-2px); }
 .route-card .rn { font-size:16px; font-weight:600; }
 .route-card .rk { color:var(--sub); font-size:12px; font-variant-numeric:tabular-nums; }
-.route-card .go { margin-top:4px; color:var(--accent); font-size:13px; }
 
 /* 表格 */
 table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line);
@@ -96,6 +93,23 @@ input[type=text], input[type=password], input[type=number], select {
 .errpage { min-height:70vh; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:10px; text-align:center; }
 .errpage .code { font-size:54px; font-weight:800; color:var(--accent); }
 .errpage .msg { color:var(--sub); }
+
+/* 机器监控：图标 + 弹层 + 图表 */
+.metrics-btn { cursor:pointer; font-size:16px; line-height:1; user-select:none; }
+.metrics-btn:hover { filter:brightness(1.1); transform:scale(1.1); }
+.modal-mask { display:none; position:fixed; inset:0; background:rgba(0,0,0,.4); z-index:100;
+              align-items:flex-start; justify-content:center; padding:48px 16px; overflow:auto; }
+.modal-mask.on { display:flex; }
+.modal-box { background:var(--card); border-radius:14px; width:100%; max-width:680px;
+             box-shadow:0 20px 60px rgba(0,0,0,.25); }
+.modal-head { display:flex; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid var(--line); }
+.modal-title { font-size:16px; font-weight:600; }
+.modal-head select { width:auto; margin-left:auto; }
+.modal-close { cursor:pointer; color:var(--sub); font-size:16px; padding:0 4px; }
+.modal-close:hover { color:var(--danger); }
+.modal-body { padding:16px 18px 22px; display:flex; flex-direction:column; gap:20px; }
+.metric-chart .mc-title { font-size:13px; font-weight:600; margin-bottom:6px; font-variant-numeric:tabular-nums; }
+.metric-chart canvas { width:100%; height:150px; display:block; cursor:crosshair; }
 
 /* ── 响应式断点 ── */
 @media (max-width:820px) {

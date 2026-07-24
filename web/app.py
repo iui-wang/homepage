@@ -6,8 +6,11 @@
 """
 
 import argparse
+import os
 import re
+import sys
 import threading
+import time
 import tomllib
 from datetime import datetime, timedelta
 from functools import wraps
@@ -50,8 +53,28 @@ HOP_BY_HOP = {
     "te", "trailers", "transfer-encoding", "upgrade",
 }
 
+# 转发给上游的登录用户身份头（auth proxy 模式）。上游只监听内网、唯一入口是
+# homepage，因此可信任这些头；客户端带来的同名头一律剥掉，防伪造。
+IDENTITY_HEADER_NAMES = {"x-forwarded-user", "x-forwarded-user-id", "x-forwarded-admin"}
+
+
+def identity_headers(user: dict) -> dict:
+    return {
+        "X-Forwarded-User": user["username"],
+        "X-Forwarded-User-Id": str(user["id"]),
+        "X-Forwarded-Admin": "1" if user["is_admin"] else "0",
+    }
+
 # 上游请求超时（秒）。
 PROXY_TIMEOUT = 30
+
+# 机器监控：采样间隔（秒）、数据保留天数、可选时间窗（key -> 秒）。
+METRICS_INTERVAL = 10
+METRICS_RETENTION_DAYS = 7
+METRICS_WINDOWS = {
+    "1m": 60, "10m": 600, "30m": 1800, "1h": 3600,
+    "3h": 10800, "1d": 86400, "3d": 259200, "7d": 604800,
+}
 
 logger = get_logger("web")
 
@@ -139,6 +162,73 @@ def maybe_log_active(username: str) -> None:
         return
     first_seg = "/" + p.lstrip("/").split("/")[0]
     db.log_active(username, request.remote_addr or "-", request.method, first_seg)
+
+
+# ---------------- 机器监控采样 ----------------
+
+def _read_cpu_times() -> tuple[int, int]:
+    """读 /proc/stat 第一行，返回 (total_jiffies, idle_jiffies)；idle 含 iowait。"""
+    with open("/proc/stat", encoding="ascii") as f:
+        parts = f.readline().split()[1:]
+    vals = [int(x) for x in parts]
+    idle = vals[3] + (vals[4] if len(vals) > 4 else 0)  # idle + iowait
+    return sum(vals), idle
+
+
+def _read_mem() -> tuple[int, int]:
+    """读 /proc/meminfo，返回 (used_bytes, total_bytes)；used = total - MemAvailable。"""
+    info = {}
+    with open("/proc/meminfo", encoding="ascii") as f:
+        for line in f:
+            k, _, rest = line.partition(":")
+            info[k] = int(rest.split()[0]) * 1024  # kB -> bytes
+    total = info["MemTotal"]
+    avail = info.get("MemAvailable", info.get("MemFree", 0))
+    return total - avail, total
+
+
+def _read_disk() -> tuple[int, int]:
+    """statvfs('/')，返回 (used_bytes, total_bytes)；used = total - free。"""
+    st = os.statvfs("/")
+    total = st.f_blocks * st.f_frsize
+    free = st.f_bfree * st.f_frsize
+    return total - free, total
+
+
+def _sampler_loop() -> None:
+    """每 METRICS_INTERVAL 秒采一次写库，约每小时清一次过期数据。守护线程运行。"""
+    prev_total, prev_idle = _read_cpu_times()
+    prune_every = max(1, 3600 // METRICS_INTERVAL)
+    i = 0
+    while True:
+        time.sleep(METRICS_INTERVAL)
+        try:
+            total, idle = _read_cpu_times()
+            dt, di = total - prev_total, idle - prev_idle
+            prev_total, prev_idle = total, idle
+            cpu_pct = max(0.0, min(100.0, (1 - di / dt) * 100)) if dt > 0 else 0.0
+            mem_used, mem_total = _read_mem()
+            disk_used, disk_total = _read_disk()
+            now = int(time.time())
+            db.insert_metric(
+                now, cpu_pct,
+                mem_used / mem_total * 100, mem_used, mem_total,
+                disk_used / disk_total * 100, disk_used, disk_total,
+            )
+            i += 1
+            if i % prune_every == 0:
+                db.prune_metrics(now, METRICS_RETENTION_DAYS)
+        except Exception:
+            logger.exception("机器监控采样失败")
+
+
+def start_sampler(debug: bool) -> None:
+    """启动采样守护线程。debug 模式下 Werkzeug 会 fork 出重载子进程，
+    只在真正服务的进程（WERKZEUG_RUN_MAIN=true）里启，避免双采。"""
+    if debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
+        return
+    threading.Thread(target=_sampler_loop, daemon=True, name="metrics-sampler").start()
+    logger.info("机器监控采样线程已启动 interval=%ss", METRICS_INTERVAL)
 
 
 # ---------------- 会话时长 ----------------
@@ -392,6 +482,19 @@ def api_active_log():
     )
 
 
+# ----- 机器监控（admin） -----
+
+@app.route("/api/metrics")
+@admin_required
+def api_metrics():
+    window = request.args.get("window", "1h")
+    seconds = METRICS_WINDOWS.get(window)
+    if seconds is None:
+        return jsonify({"error": "无效时间窗"}), 400
+    now = int(time.time())
+    return jsonify(db.query_metrics(now - seconds, seconds))
+
+
 # ---------------- 反向代理（catch-all） ----------------
 
 @app.route("/<path:fullpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
@@ -419,8 +522,11 @@ def proxy(fullpath):
     fwd_headers = {
         k: v
         for k, v in request.headers
-        if k.lower() not in HOP_BY_HOP and k.lower() not in ("host", "content-length")
+        if k.lower() not in HOP_BY_HOP
+        and k.lower() not in ("host", "content-length")
+        and k.lower() not in IDENTITY_HEADER_NAMES
     }
+    fwd_headers.update(identity_headers(g.user))
 
     try:
         upstream = requests.request(
@@ -482,7 +588,10 @@ def ws_proxy(ws, fullpath):
 
     try:
         upstream = wsclient.create_connection(
-            target, subprotocols=client_protocols or None, timeout=10
+            target,
+            subprotocols=client_protocols or None,
+            timeout=10,
+            header=identity_headers(user),
         )
     except Exception as exc:
         logger.warning("WS 上游连接失败 route=%s target=%s err=%s", key, target, exc)
@@ -563,6 +672,7 @@ def main() -> None:
 
     host = args.host or config["server"]["host"]
     port = args.port or config["server"]["port"]
+    start_sampler(args.debug)
     logger.info("homepage 启动 host=%s port=%s session_days=%s", host, port, _SESSION_DAYS)
     app.run(host=host, port=port, debug=args.debug, threaded=True)
 
