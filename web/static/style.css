@@ -39,6 +39,12 @@ a { color:var(--accent); text-decoration:none; }
 .route-card .rn { font-size:16px; font-weight:600; }
 .route-card .rk { color:var(--sub); font-size:12px; font-variant-numeric:tabular-nums; }
 
+/* 机器选择弹出菜单（多机器路由卡片点击时） */
+.machine-menu { position:fixed; z-index:120; background:var(--card); border:1px solid var(--line);
+                border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.14); padding:4px; min-width:110px; }
+.machine-item { padding:6px 12px; border-radius:6px; font-size:13px; cursor:pointer; white-space:nowrap; }
+.machine-item:hover { background:var(--soft); color:var(--accent); }
+
 /* 表格 */
 table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line);
         border-radius:10px; overflow:hidden; }

@@ -24,18 +24,22 @@ ss -tlnp | grep <端口>
 
 ---
 
-## 第二步：选择代理模式
+## 第二步：选择代理模式与机器
+
+URL 是机器+服务两级结构：`/<machine>/<key>/...`。`machine` 是机器 slug，固定四台：
+`tokyo`（东京腾讯云）、`shanghai`（上海阿里云）、`m720q`（联想 M720Q）、`shin`（东京シンVPS）。
+添加路由时必须指定 `machine` 字段；同一 key 可以在多台机器上各有一条路由。
 
 | 模式 | strip_prefix | 何时使用 |
 |---|---|---|
-| **普通模式** | `false`（默认） | 上游服务知道自己跑在 `/<key>` 路径下（如 ttyd 用 `--base-path /tyyd` 启动） |
+| **普通模式** | `false`（默认） | 上游服务知道自己跑在 `/<machine>/<key>` 路径下（如 ttyd 用 `--base-path /tokyo/tyyd` 启动） |
 | **剥前缀模式** | `true` | 上游服务跑在根路径 `/`，不需要任何路径配置（如 code-server、大多数现成服务） |
 
 **判断方法**：不确定时，先试剥前缀模式（`strip_prefix: true`）。大多数现成服务（Grafana、Jupyter、各种 dashboard）都跑在根路径。
 
-两种模式的区别：
-- 普通模式：浏览器访问 `/myapp/page` → 代理转发 `/myapp/page` 到上游
-- 剥前缀模式：浏览器访问 `/myapp/page` → 代理转发 `/page` 到上游
+两种模式的区别（以 machine=tokyo、key=myapp 为例）：
+- 普通模式：浏览器访问 `/tokyo/myapp/page` → 代理**完整原路径** `/tokyo/myapp/page` 转发到上游
+- 剥前缀模式：浏览器访问 `/tokyo/myapp/page` → 代理转发 `/page` 到上游（剥掉两段前缀）
 
 ---
 
@@ -62,6 +66,7 @@ curl -s -c /tmp/hp_cookie.txt -X POST http://127.0.0.1/login \
 curl -s -b /tmp/hp_cookie.txt -X POST http://127.0.0.1/api/routes \
   -H "Content-Type: application/json" \
   -d '{
+    "machine": "tokyo",
     "key": "myapp",
     "display_name": "我的应用",
     "upstream_host": "127.0.0.1",
@@ -77,6 +82,7 @@ curl -s -b /tmp/hp_cookie.txt -X POST http://127.0.0.1/api/routes \
 curl -s -b /tmp/hp_cookie.txt -X POST http://127.0.0.1/api/routes \
   -H "Content-Type: application/json" \
   -d '{
+    "machine": "tokyo",
     "key": "myapp",
     "display_name": "我的应用",
     "upstream_host": "127.0.0.1",
@@ -85,6 +91,8 @@ curl -s -b /tmp/hp_cookie.txt -X POST http://127.0.0.1/api/routes \
   }' | python3 -m json.tool
 # 期望返回: {"ok": true}
 ```
+
+> `machine` 必填，且必须是 machines 表里的 slug（tokyo / shanghai / m720q / shin），否则返回 400。
 
 ---
 
@@ -118,10 +126,10 @@ curl -s -b /tmp/hp_cookie.txt \
 ## 第五步：验证
 
 ```bash
-# 测试路由是否正常响应（用 admin session）
-curl -s -b /tmp/hp_cookie.txt -o /dev/null -w "%{http_code}" http://127.0.0.1/myapp/
+# 测试路由是否正常响应（用 admin session；URL 为 /<machine>/<key>/）
+curl -s -b /tmp/hp_cookie.txt -o /dev/null -w "%{http_code}" http://127.0.0.1/tokyo/myapp/
 # 期望: 200 或 302（302 是上游的重定向，正常）
-# 如果返回 404 → 路由 key 写错或路由未添加成功
+# 如果返回 404 → machine 或 key 写错，或路由未添加成功
 # 如果返回 502 → 上游服务未启动或端口写错
 # 如果返回 403 → 当前用户没有该路由权限
 ```
@@ -137,7 +145,7 @@ curl -s -b /tmp/hp_cookie.txt -o /dev/null -w "%{http_code}" http://127.0.0.1/my
 
 **Q: 页面能打开但样式/JS 全失效**
 - 症状：上游服务用了绝对路径静态资源（如 `/static/...`），在剥前缀模式下被路由到了别处
-- 解法：改用普通模式，同时在上游服务配置 base-path 为 `/<key>`；或检查上游是否有配置 `base-path` / `root-path` 的选项
+- 解法：改用普通模式，同时在上游服务配置 base-path 为 `/<machine>/<key>`；或检查上游是否有配置 `base-path` / `root-path` 的选项
 
 **Q: WebSocket 不通（如终端黑屏）**
 - homepage 已内置 WebSocket 代理，不需要额外配置

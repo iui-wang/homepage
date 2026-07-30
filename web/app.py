@@ -1,7 +1,7 @@
 """homepage —— 反向代理路由门户 + 用户/路由管理 + 活跃记录。
 
 - 监听 0.0.0.0:80，是唯一公网入口。
-- /<route>/... 反向代理到该路由配置的上游 ip:port（原路径透传）。
+- /<machine>/<key>/... 反向代理到该路由配置的上游 ip:port（strip_prefix=0 时原路径透传）。
 - 登录失败写 auth.log（含 IP），配合 fail2ban 封禁暴力破解。
 """
 
@@ -160,8 +160,9 @@ def maybe_log_active(username: str) -> None:
         return
     if p.lower().endswith(STATIC_EXT):
         return
-    first_seg = "/" + p.lstrip("/").split("/")[0]
-    db.log_active(username, request.remote_addr or "-", request.method, first_seg)
+    # URL 是 /<machine>/<key>/... 两级结构，记录前两段以保留服务信息。
+    segs = "/" + "/".join(p.lstrip("/").split("/")[:2])
+    db.log_active(username, request.remote_addr or "-", request.method, segs)
 
 
 # ---------------- 机器监控采样 ----------------
@@ -378,15 +379,18 @@ def api_set_user_routes(user_id):
 @app.route("/api/routes")
 @admin_required
 def api_list_routes():
-    return jsonify({"routes": db.list_routes()})
+    return jsonify({"routes": db.list_routes(), "machines": db.list_machines()})
 
 
 def _validate_route_payload(data, *, require_key):
+    machine = (data.get("machine") or "").strip()
     key = (data.get("key") or "").strip()
     name = (data.get("display_name") or "").strip()
     host = (data.get("upstream_host") or "").strip()
     port = data.get("upstream_port")
     strip_prefix = bool(data.get("strip_prefix", False))
+    if not db.machine_exists(machine):
+        return None, "machine 必须是 machines 表里已注册的 slug"
     if require_key:
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", key):
             return None, "路由 key 需为 1~40 位字母/数字/_-"
@@ -402,7 +406,7 @@ def _validate_route_payload(data, *, require_key):
         return None, "上游 port 必须是整数"
     if not (1 <= port <= 65535):
         return None, "上游 port 取值 1~65535"
-    return {"key": key, "display_name": name, "upstream_host": host, "upstream_port": port, "strip_prefix": strip_prefix}, None
+    return {"machine": machine, "key": key, "display_name": name, "upstream_host": host, "upstream_port": port, "strip_prefix": strip_prefix}, None
 
 
 @app.route("/api/routes", methods=["POST"])
@@ -412,9 +416,9 @@ def api_add_route():
     payload, err = _validate_route_payload(data, require_key=True)
     if err:
         return jsonify({"error": err}), 400
-    if db.get_route_by_key(payload["key"]) is not None:
-        return jsonify({"error": "路由 key 已存在"}), 400
-    db.add_route(payload["key"], payload["display_name"], payload["upstream_host"], payload["upstream_port"], payload["strip_prefix"])
+    if db.get_route(payload["machine"], payload["key"]) is not None:
+        return jsonify({"error": "该机器上路由 key 已存在"}), 400
+    db.add_route(payload["machine"], payload["key"], payload["display_name"], payload["upstream_host"], payload["upstream_port"], payload["strip_prefix"])
     return jsonify({"ok": True})
 
 
@@ -425,7 +429,7 @@ def api_update_route(route_id):
     payload, err = _validate_route_payload(data, require_key=False)
     if err:
         return jsonify({"error": err}), 400
-    db.update_route(route_id, payload["display_name"], payload["upstream_host"], payload["upstream_port"], payload["strip_prefix"])
+    db.update_route(route_id, payload["machine"], payload["display_name"], payload["upstream_host"], payload["upstream_port"], payload["strip_prefix"])
     return jsonify({"ok": True})
 
 
@@ -500,8 +504,12 @@ def api_metrics():
 @app.route("/<path:fullpath>", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
 @login_required
 def proxy(fullpath):
-    key = fullpath.split("/", 1)[0]
-    route = db.get_route_by_key(key)
+    # URL 两级结构 /<machine>/<key>/<rest>：首段机器 slug，次段服务 key。
+    parts = fullpath.split("/")
+    if len(parts) < 2:
+        return Response(render_template("notfound.html"), status=404)
+    machine, key = parts[0], parts[1]
+    route = db.get_route(machine, key)
     if route is None:
         return Response(render_template("notfound.html"), status=404)
 
@@ -510,10 +518,11 @@ def proxy(fullpath):
 
     maybe_log_active(g.user["username"])
 
-    # strip_prefix 路由（如 code-server）需要剥掉 /<key> 前缀再转发。
+    # strip_prefix 路由（如 code-server）剥掉 /<machine>/<key> 两段前缀再转发；
+    # 普通路由完整原路径透传（上游应用挂在 /<machine>/<key> 前缀下）。
     path = request.path
     if route["strip_prefix"]:
-        path = path[len(key) + 1:] or "/"
+        path = path[len(machine) + len(key) + 2:] or "/"
 
     target = f"http://{route['upstream_host']}:{route['upstream_port']}{path}"
     if request.query_string:
@@ -538,7 +547,7 @@ def proxy(fullpath):
             timeout=PROXY_TIMEOUT,
         )
     except requests.RequestException as exc:
-        logger.warning("上游不可达 route=%s target=%s err=%s", key, target, exc)
+        logger.warning("上游不可达 route=%s/%s target=%s err=%s", machine, key, target, exc)
         return Response(
             render_template("upstream_error.html", route=route["display_name"]),
             status=502,
@@ -569,14 +578,17 @@ def ws_proxy(ws, fullpath):
     user = current_user()
     if user is None:
         return
-    key = fullpath.split("/", 1)[0]
-    route = db.get_route_by_key(key)
+    parts = fullpath.split("/")
+    if len(parts) < 2:
+        return
+    machine, key = parts[0], parts[1]
+    route = db.get_route(machine, key)
     if route is None or not db.user_can_see_route(user["id"], user["is_admin"], key):
         return
 
     ws_path = request.path
     if route["strip_prefix"]:
-        ws_path = ws_path[len(key) + 1:] or "/"
+        ws_path = ws_path[len(machine) + len(key) + 2:] or "/"
 
     target = f"ws://{route['upstream_host']}:{route['upstream_port']}{ws_path}"
     if request.query_string:
@@ -594,7 +606,7 @@ def ws_proxy(ws, fullpath):
             header=identity_headers(user),
         )
     except Exception as exc:
-        logger.warning("WS 上游连接失败 route=%s target=%s err=%s", key, target, exc)
+        logger.warning("WS 上游连接失败 route=%s/%s target=%s err=%s", machine, key, target, exc)
         return
     upstream.settimeout(None)
 

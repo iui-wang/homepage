@@ -28,6 +28,39 @@ document.querySelectorAll(".tab").forEach((t) => {
 });
 
 // ---------------- 路由 ----------------
+let ROUTES = [];
+let machineMenu = null;
+
+function closeMachineMenu() {
+  if (machineMenu) { machineMenu.remove(); machineMenu = null; }
+}
+
+// 多台机器时在点击位置弹出小菜单，选择机器后跳转 /<machine>/<key>/。
+function showMachineMenu(x, y, route) {
+  closeMachineMenu();
+  const menu = document.createElement("div");
+  menu.className = "machine-menu";
+  menu.innerHTML = route.machines.map((m) =>
+    `<div class="machine-item" data-slug="${esc(m.slug)}">${esc(m.display_name)}</div>`).join("");
+  document.body.appendChild(menu);
+  menu.style.left = Math.max(4, Math.min(x, window.innerWidth - menu.offsetWidth - 8)) + "px";
+  menu.style.top = Math.max(4, Math.min(y, window.innerHeight - menu.offsetHeight - 8)) + "px";
+  menu.querySelectorAll(".machine-item").forEach((it) => {
+    it.addEventListener("click", (e) => {
+      e.stopPropagation();
+      location.href = "/" + it.dataset.slug + "/" + route.key + "/";
+    });
+  });
+  machineMenu = menu;
+}
+
+document.addEventListener("click", (e) => {
+  if (machineMenu && !machineMenu.contains(e.target)) closeMachineMenu();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") closeMachineMenu();
+});
+
 async function loadRoutes() {
   const { data } = await api("/api/me");
   const grid = document.getElementById("routeGrid");
@@ -35,13 +68,23 @@ async function loadRoutes() {
     grid.innerHTML = '<div class="muted">暂无可见路由。请联系管理员开通。</div>';
     return;
   }
-  grid.innerHTML = data.routes.map((r) => `
+  ROUTES = data.routes;
+  grid.innerHTML = ROUTES.map((r) => `
     <div class="route-card" data-key="${esc(r.key)}">
       <div class="rn">${esc(r.display_name)}</div>
-      <div class="rk">/${esc(r.key)}</div>
+      <div class="rk">${r.machines.length > 1 ? r.machines.length + " 台" : esc(r.machines[0].display_name)}</div>
     </div>`).join("");
   grid.querySelectorAll(".route-card").forEach((c) => {
-    c.addEventListener("click", () => { location.href = "/" + c.dataset.key + "/"; });
+    c.addEventListener("click", (e) => {
+      const r = ROUTES.find((x) => x.key === c.dataset.key);
+      if (!r || !r.machines.length) return;
+      if (r.machines.length === 1) {
+        location.href = "/" + r.machines[0].slug + "/" + r.key + "/";
+      } else {
+        e.stopPropagation();
+        showMachineMenu(e.clientX, e.clientY, r);
+      }
+    });
   });
 }
 
@@ -50,7 +93,12 @@ let ALL_ROUTES = [];
 async function loadUsers() {
   const { data } = await api("/api/users");
   if (!data) return;
-  ALL_ROUTES = data.routes;
+  ALL_ROUTES = [];
+  const seenKeys = new Set();
+  // 同一 key 可能有多台机器的路由行，授权按 key 去重展示。
+  for (const r of data.routes) {
+    if (!seenKeys.has(r.key)) { seenKeys.add(r.key); ALL_ROUTES.push(r); }
+  }
   const tb = document.querySelector("#userTable tbody");
   tb.innerHTML = data.users.map((u) => {
     const pills = u.is_admin
@@ -161,12 +209,21 @@ async function loadConfig() {
   bindRouteAdd();
   loadRouteTable();
 }
+let ALL_MACHINES = [];
+function machineOptions(selected) {
+  return ALL_MACHINES.map((m) =>
+    `<option value="${esc(m.slug)}" ${m.slug === selected ? "selected" : ""}>${esc(m.display_name)}</option>`).join("");
+}
 async function loadRouteTable() {
   const { data } = await api("/api/routes");
   if (!data) return;
+  ALL_MACHINES = data.machines || [];
+  const nrMachine = document.getElementById("nrMachine");
+  nrMachine.innerHTML = machineOptions(nrMachine.value);
   const tb = document.querySelector("#routeTable tbody");
   tb.innerHTML = data.routes.map((r) => `<tr data-id="${r.id}">
       <td><code>${esc(r.key)}</code></td>
+      <td><select class="rt-machine">${machineOptions(r.machine)}</select></td>
       <td><input type="text" class="rt-name" value="${esc(r.display_name)}"></td>
       <td><input type="text" class="rt-host" value="${esc(r.upstream_host)}"></td>
       <td><input type="number" class="rt-port" value="${esc(r.upstream_port)}" style="width:90px"></td>
@@ -176,6 +233,7 @@ async function loadRouteTable() {
   tb.querySelectorAll("[data-save]").forEach((b) => b.addEventListener("click", async () => {
     const tr = b.closest("tr");
     const body = {
+      machine: tr.querySelector(".rt-machine").value,
       display_name: tr.querySelector(".rt-name").value.trim(),
       upstream_host: tr.querySelector(".rt-host").value.trim(),
       upstream_port: parseInt(tr.querySelector(".rt-port").value, 10),
@@ -197,6 +255,7 @@ function bindRouteAdd() {
     const err = document.getElementById("nrErr");
     err.textContent = "";
     const body = {
+      machine: document.getElementById("nrMachine").value,
       key: document.getElementById("nrKey").value.trim(),
       display_name: document.getElementById("nrName").value.trim(),
       upstream_host: document.getElementById("nrHost").value.trim(),

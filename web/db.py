@@ -17,11 +17,28 @@ METRICS_MAX_POINTS = 400
 # 默认会话时长（天）。
 DEFAULT_SESSION_DAYS = 30
 
-# 首次启动时种入的默认路由：(key, 大名, 上游 host, 上游 port)。
-DEFAULT_ROUTES = [
-    ("xiangyun", "博弘翔云1号私募证券投资基金A", "127.0.0.1", 8848),
-    ("bill", "账单", "127.0.0.1", 5057),
+# 首次启动时种入的机器清单：(slug, 显示名, 排序)。URL 第一级路径段就是机器 slug。
+DEFAULT_MACHINES = [
+    ("tokyo", "东京腾讯云", 0),
+    ("shanghai", "上海阿里云", 1),
+    ("m720q", "联想 M720Q", 2),
+    ("shin", "东京シンVPS", 3),
 ]
+
+# 首次启动时种入的默认路由：(machine, key, 大名, 上游 host, 上游 port)。
+DEFAULT_ROUTES = [
+    ("tokyo", "xiangyun", "博弘翔云1号私募证券投资基金A", "127.0.0.1", 8848),
+    ("tokyo", "bill", "账单", "127.0.0.1", 5057),
+]
+
+# 旧库迁移时按上游 host 回填 routes.machine 的映射（见 _migrate_routes_machine）。
+HOST_TO_MACHINE = {
+    "127.0.0.1": "tokyo",
+    "10.77.0.1": "tokyo",
+    "10.77.0.2": "shanghai",
+    "10.77.0.3": "shin",
+    "10.77.0.6": "m720q",
+}
 
 _DB_PATH = ""
 
@@ -42,6 +59,10 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _table_cols(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+
+
 def init_db(admin_initial_password: str) -> None:
     conn = get_conn()
     conn.executescript(
@@ -53,15 +74,22 @@ def init_db(admin_initial_password: str) -> None:
             is_admin      INTEGER NOT NULL DEFAULT 0,
             created_at    TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS machines (
+            slug         TEXT PRIMARY KEY,
+            display_name TEXT NOT NULL,
+            sort_order   INTEGER NOT NULL DEFAULT 0
+        );
         CREATE TABLE IF NOT EXISTS routes (
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
-            key           TEXT UNIQUE NOT NULL,
+            machine       TEXT NOT NULL DEFAULT 'tokyo',
+            key           TEXT NOT NULL,
             display_name  TEXT NOT NULL,
             upstream_host TEXT NOT NULL,
             upstream_port INTEGER NOT NULL,
             strip_prefix  INTEGER NOT NULL DEFAULT 0,
             sort_order    INTEGER NOT NULL DEFAULT 0,
-            created_at    TEXT NOT NULL
+            created_at    TEXT NOT NULL,
+            UNIQUE(machine, key)
         );
         CREATE TABLE IF NOT EXISTS user_routes (
             user_id  INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -110,21 +138,11 @@ def init_db(admin_initial_password: str) -> None:
             (new_hash,),
         )
 
-    # 种入默认路由（routes 表为空时）。
-    cnt = conn.execute("SELECT COUNT(*) AS c FROM routes").fetchone()["c"]
-    if cnt == 0:
-        for i, (key, name, host, port) in enumerate(DEFAULT_ROUTES):
-            conn.execute(
-                "INSERT INTO routes(key, display_name, upstream_host, upstream_port, sort_order, created_at) "
-                "VALUES(?,?,?,?,?,?)",
-                (key, name, host, port, i, _now()),
-            )
-
-    # 种入默认会话时长。
-    if conn.execute("SELECT value FROM settings WHERE key='session_days'").fetchone() is None:
+    # 种入机器清单（INSERT OR IGNORE，已有库只补缺失的）。
+    for slug, name, order in DEFAULT_MACHINES:
         conn.execute(
-            "INSERT INTO settings(key, value) VALUES('session_days', ?)",
-            (str(DEFAULT_SESSION_DAYS),),
+            "INSERT OR IGNORE INTO machines(slug, display_name, sort_order) VALUES(?,?,?)",
+            (slug, name, order),
         )
 
     # 为已存在的旧数据库补列（新建库已在 CREATE TABLE 里包含）。
@@ -133,6 +151,52 @@ def init_db(admin_initial_password: str) -> None:
         conn.commit()
     except sqlite3.OperationalError:
         pass  # 列已存在，忽略
+
+    # 旧库 routes 表没有 machine 列时重建（唯一约束 key → (machine, key)），
+    # 再按上游 host 回填 machine。幂等：列已存在则整个跳过。
+    if "machine" not in _table_cols(conn, "routes"):
+        conn.commit()  # PRAGMA foreign_keys 在事务内是 no-op，先结束未决事务
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.executescript(
+            """
+            CREATE TABLE routes_new (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                machine       TEXT NOT NULL DEFAULT 'tokyo',
+                key           TEXT NOT NULL,
+                display_name  TEXT NOT NULL,
+                upstream_host TEXT NOT NULL,
+                upstream_port INTEGER NOT NULL,
+                strip_prefix  INTEGER NOT NULL DEFAULT 0,
+                sort_order    INTEGER NOT NULL DEFAULT 0,
+                created_at    TEXT NOT NULL,
+                UNIQUE(machine, key)
+            );
+            INSERT INTO routes_new(id, key, display_name, upstream_host, upstream_port, strip_prefix, sort_order, created_at)
+                SELECT id, key, display_name, upstream_host, upstream_port, strip_prefix, sort_order, created_at FROM routes;
+            DROP TABLE routes;
+            ALTER TABLE routes_new RENAME TO routes;
+            """
+        )
+        conn.execute("PRAGMA foreign_keys=ON")
+        for host, machine in HOST_TO_MACHINE.items():
+            conn.execute("UPDATE routes SET machine=? WHERE upstream_host=?", (machine, host))
+
+    # 种入默认路由（routes 表为空时）。
+    cnt = conn.execute("SELECT COUNT(*) AS c FROM routes").fetchone()["c"]
+    if cnt == 0:
+        for i, (machine, key, name, host, port) in enumerate(DEFAULT_ROUTES):
+            conn.execute(
+                "INSERT INTO routes(machine, key, display_name, upstream_host, upstream_port, sort_order, created_at) "
+                "VALUES(?,?,?,?,?,?,?)",
+                (machine, key, name, host, port, i, _now()),
+            )
+
+    # 种入默认会话时长。
+    if conn.execute("SELECT value FROM settings WHERE key='session_days'").fetchone() is None:
+        conn.execute(
+            "INSERT INTO settings(key, value) VALUES('session_days', ?)",
+            (str(DEFAULT_SESSION_DAYS),),
+        )
 
     # 迁移 active_log：旧表用 ts 单列，新表改为 start_ts/end_ts/count，同时清空历史数据。
     cols = {r[1] for r in conn.execute("PRAGMA table_info(active_log)").fetchall()}
@@ -188,14 +252,17 @@ def list_users() -> list[dict]:
     users = conn.execute("SELECT id, username, is_admin, created_at FROM users ORDER BY id").fetchall()
     result = []
     for u in users:
-        keys = [
-            r["key"]
-            for r in conn.execute(
-                "SELECT rt.key FROM user_routes ur JOIN routes rt ON rt.id=ur.route_id "
-                "WHERE ur.user_id=? ORDER BY rt.sort_order",
-                (u["id"],),
-            ).fetchall()
-        ]
+        # 同一 key 可能有多台机器的路由行，授权按 key 去重展示。
+        keys = list(
+            dict.fromkeys(
+                r["key"]
+                for r in conn.execute(
+                    "SELECT rt.key FROM user_routes ur JOIN routes rt ON rt.id=ur.route_id "
+                    "WHERE ur.user_id=? ORDER BY rt.sort_order",
+                    (u["id"],),
+                ).fetchall()
+            )
+        )
         result.append(
             {
                 "id": u["id"],
@@ -234,11 +301,11 @@ def update_password(user_id: int, password_hash: str) -> None:
 
 
 def set_user_routes(user_id: int, route_keys: list[str]) -> None:
+    """按服务 key 授权：同一 key 在所有机器上的路由行都会授予该用户。"""
     conn = get_conn()
     conn.execute("DELETE FROM user_routes WHERE user_id=?", (user_id,))
     for key in route_keys:
-        r = conn.execute("SELECT id FROM routes WHERE key=?", (key,)).fetchone()
-        if r is not None:
+        for r in conn.execute("SELECT id FROM routes WHERE key=?", (key,)).fetchall():
             conn.execute(
                 "INSERT OR IGNORE INTO user_routes(user_id, route_id) VALUES(?,?)",
                 (user_id, r["id"]),
@@ -247,45 +314,89 @@ def set_user_routes(user_id: int, route_keys: list[str]) -> None:
     conn.close()
 
 
+# ---------- machines ----------
+
+def list_machines() -> list[dict]:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT slug, display_name, sort_order FROM machines ORDER BY sort_order, slug"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def machine_exists(slug: str) -> bool:
+    conn = get_conn()
+    row = conn.execute("SELECT 1 FROM machines WHERE slug=?", (slug,)).fetchone()
+    conn.close()
+    return row is not None
+
+
 # ---------- routes ----------
 
 def list_routes() -> list[dict]:
     conn = get_conn()
     rows = conn.execute(
-        "SELECT id, key, display_name, upstream_host, upstream_port, strip_prefix, sort_order "
+        "SELECT id, machine, key, display_name, upstream_host, upstream_port, strip_prefix, sort_order "
         "FROM routes ORDER BY sort_order, id"
     ).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
 
-def get_route_by_key(key: str) -> sqlite3.Row | None:
+def get_route(machine: str, key: str) -> sqlite3.Row | None:
     conn = get_conn()
-    row = conn.execute("SELECT * FROM routes WHERE key=?", (key,)).fetchone()
+    row = conn.execute("SELECT * FROM routes WHERE machine=? AND key=?", (machine, key)).fetchone()
     conn.close()
     return row
 
 
 def visible_routes_for(user_id: int, is_admin: bool) -> list[dict]:
+    """按服务 key 聚合可见路由：每项 {key, display_name, machines:[{slug, display_name}]}，
+    machines 按机器表 sort_order 排序。"""
     conn = get_conn()
+    base_sql = (
+        "SELECT rt.key, rt.display_name, m.slug, m.display_name AS machine_name, m.sort_order AS machine_sort "
+        "FROM {src} JOIN machines m ON m.slug=rt.machine "
+        "{where} ORDER BY rt.sort_order, rt.id"
+    )
     if is_admin:
         rows = conn.execute(
-            "SELECT key, display_name FROM routes ORDER BY sort_order, id"
+            base_sql.format(src="routes rt", where="")
         ).fetchall()
     else:
         rows = conn.execute(
-            "SELECT rt.key, rt.display_name FROM user_routes ur "
-            "JOIN routes rt ON rt.id=ur.route_id WHERE ur.user_id=? "
-            "ORDER BY rt.sort_order, rt.id",
+            base_sql.format(
+                src="user_routes ur JOIN routes rt ON rt.id=ur.route_id",
+                where="WHERE ur.user_id=?",
+            ),
             (user_id,),
         ).fetchall()
     conn.close()
-    return [dict(r) for r in rows]
+    result: list[dict] = []
+    by_key: dict[str, dict] = {}
+    for r in rows:
+        entry = by_key.get(r["key"])
+        if entry is None:
+            entry = {"key": r["key"], "display_name": r["display_name"], "machines": []}
+            by_key[r["key"]] = entry
+            result.append(entry)
+        entry["machines"].append(
+            {"slug": r["slug"], "display_name": r["machine_name"], "sort_order": r["machine_sort"]}
+        )
+    for entry in result:
+        entry["machines"].sort(key=lambda m: m["sort_order"])
+        for m in entry["machines"]:
+            del m["sort_order"]
+    return result
 
 
 def user_can_see_route(user_id: int, is_admin: bool, key: str) -> bool:
     if is_admin:
-        return get_route_by_key(key) is not None
+        conn = get_conn()
+        row = conn.execute("SELECT 1 FROM routes WHERE key=?", (key,)).fetchone()
+        conn.close()
+        return row is not None
     conn = get_conn()
     row = conn.execute(
         "SELECT 1 FROM user_routes ur JOIN routes rt ON rt.id=ur.route_id "
@@ -296,23 +407,23 @@ def user_can_see_route(user_id: int, is_admin: bool, key: str) -> bool:
     return row is not None
 
 
-def add_route(key: str, display_name: str, host: str, port: int, strip_prefix: bool = False) -> None:
+def add_route(machine: str, key: str, display_name: str, host: str, port: int, strip_prefix: bool = False) -> None:
     conn = get_conn()
     nxt = conn.execute("SELECT COALESCE(MAX(sort_order),-1)+1 AS n FROM routes").fetchone()["n"]
     conn.execute(
-        "INSERT INTO routes(key, display_name, upstream_host, upstream_port, strip_prefix, sort_order, created_at) "
-        "VALUES(?,?,?,?,?,?,?)",
-        (key, display_name, host, port, int(strip_prefix), nxt, _now()),
+        "INSERT INTO routes(machine, key, display_name, upstream_host, upstream_port, strip_prefix, sort_order, created_at) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (machine, key, display_name, host, port, int(strip_prefix), nxt, _now()),
     )
     conn.commit()
     conn.close()
 
 
-def update_route(route_id: int, display_name: str, host: str, port: int, strip_prefix: bool = False) -> None:
+def update_route(route_id: int, machine: str, display_name: str, host: str, port: int, strip_prefix: bool = False) -> None:
     conn = get_conn()
     conn.execute(
-        "UPDATE routes SET display_name=?, upstream_host=?, upstream_port=?, strip_prefix=? WHERE id=?",
-        (display_name, host, port, int(strip_prefix), route_id),
+        "UPDATE routes SET machine=?, display_name=?, upstream_host=?, upstream_port=?, strip_prefix=? WHERE id=?",
+        (machine, display_name, host, port, int(strip_prefix), route_id),
     )
     conn.commit()
     conn.close()

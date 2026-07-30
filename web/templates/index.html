@@ -98,6 +98,7 @@
     <div class="h2" style="margin-top:22px">路由与上游</div>
     <div class="card">
       <div class="row">
+        <div class="fg" style="width:150px"><label>机器</label><select id="nrMachine"></select></div>
         <div class="fg" style="width:150px"><label>路由 key（路径前缀）</label><input type="text" id="nrKey" placeholder="如 bill"></div>
         <div class="fg" style="flex:1; min-width:160px"><label>显示名（大名）</label><input type="text" id="nrName"></div>
         <div class="fg" style="width:150px"><label>上游 host</label><input type="text" id="nrHost" value="127.0.0.1"></div>
@@ -107,7 +108,7 @@
       </div>
       <div class="form-err" id="nrErr"></div>
     </div>
-    <div class="table-scroll"><table id="routeTable"><thead><tr><th>key</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>剥前缀</th><th>操作</th></tr></thead><tbody></tbody></table></div>
+    <div class="table-scroll"><table id="routeTable"><thead><tr><th>key</th><th>机器</th><th>显示名</th><th>上游 host</th><th>上游 port</th><th>剥前缀</th><th>操作</th></tr></thead><tbody></tbody></table></div>
   </section>
   {% endif %}
 

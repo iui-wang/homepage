@@ -1,5 +1,5 @@
 [Unit]
-Description=ttyd web terminal (仅环回，经 homepage 反代 /tyyd 暴露)
+Description=ttyd web terminal (wg 10.77.0.1，经 homepage 反代 /tokyo/tyyd 暴露)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,9 +8,9 @@ Type=simple
 User=wyw
 Group=wyw
 WorkingDirectory=/home/wyw
-# -i 127.0.0.1 只监听环回（不直接对公网）；-b /tyyd 配合 homepage 原路径透传；
+# -i 10.77.0.1 监听 wg 内网；-b /tokyo/tyyd 配合 homepage 原路径透传；
 # -W 允许网页输入；--max-clients 限制并发；末尾 /bin/bash 即开给 wyw 的 shell。
-ExecStart=/usr/local/bin/ttyd --interface 127.0.0.1 --port 7681 --base-path /tyyd --writable --max-clients 5 /bin/bash
+ExecStart=/usr/local/bin/ttyd --interface 10.77.0.1 --port 7681 --base-path /tokyo/tyyd --writable --max-clients 5 /bin/bash
 Restart=always
 RestartSec=5
 
