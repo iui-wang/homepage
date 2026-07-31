@@ -1,5 +1,5 @@
 [Unit]
-Description=Garage Web UI (仅环回，经 homepage 反代 /garage 暴露)
+Description=Garage Web UI (仅环回，经 homepage 反代 /shanghai/garage 暴露)
 After=network-online.target
 Wants=network-online.target
 
@@ -8,7 +8,7 @@ Type=simple
 WorkingDirectory=/home/wyw/garage-webui
 Environment="HOST=127.0.0.1"
 Environment="PORT=3909"
-Environment="BASE_PATH=/garage"
+Environment="BASE_PATH=/shanghai/garage"
 Environment="CONFIG_PATH=/etc/garage.toml"
 ExecStart=/home/wyw/garage-webui/garage-webui
 Restart=always

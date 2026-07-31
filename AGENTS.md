@@ -42,7 +42,7 @@ web/static/     app.js（所有前端逻辑）、style.css
 config.toml     启动配置（secret_key、admin 密码、监听、路径）—— 已 gitignore
 data/homepage.db  SQLite，首次启动自动建库种数据（默认路由 xiangyun、bill）
 logs/auth.log   登录失败记录，供 fail2ban 读取
-deploy/         systemd 单元与 fail2ban 配置；除 homepage 自身外，还存放接入本门户的其他服务的单元文件（code-server、ttyd、filebrowser、garage-webui）
+deploy/         systemd 单元与 fail2ban 配置；除 homepage 自身外，还存放接入本门户的其他服务的单元文件（code-server、code-server-shanghai、ttyd、filebrowser、garage-webui）
 doc/add-site.md 接入新服务的操作文档
 ```
 
@@ -91,6 +91,7 @@ systemctl restart fail2ban
 - 上游服务必须绑 `127.0.0.1`，直接对公网监听会绕过登录门。普通模式为完整原路径透传（`{IP}/tokyo/bill/x` → 上游 `/tokyo/bill/x`），上游需在 `/<machine>/<key>` 前缀下提供服务；否则用 `strip_prefix=1`（剥两段前缀，上游收到 `/x`）。
 - `routes_repo/` 是**未接入的半成品**：`app.py` 末尾的 `sys.modules["app"] = sys.modules["__main__"]` 及其注释提到的 `setup_routes_repo()` 在代码中并不存在，目录内容（如 `dice3d/`）也没有任何加载器引用。别去找不存在的实现——要么补上加载逻辑，要么把别名和注释一起删掉（无副作用）。
 - `web/` 下的 `web.log` 和 `web.log.2026-06-*` 是 logger 改绝对路径前以 `web/` 为 CWD 跑出来的遗留文件，现已被 `.gitignore` 的 `web/*.log*` 覆盖，可安全删除；当前日志在 `web/logs/`。
+- `deploy/homepage.service` 以 `User=root` 运行（绑 80 端口的需要），工作目录是 `web/`，stdout/stderr 追加到 `/var/log/homepage-web.log`。
 
 ## 操作文档
 

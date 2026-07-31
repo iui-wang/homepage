@@ -1,0 +1,14 @@
+[Unit]
+Description=code-server (仅环回，经 homepage 反代 /shanghai/code 暴露)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/wyw
+ExecStart=/home/wyw/code-server/bin/code-server --bind-addr 127.0.0.1:8090 --auth none /home/wyw
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
