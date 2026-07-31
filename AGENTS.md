@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文件是 AI 智能体在本仓库工作时的项目说明，内容与代码保持一致，以此为准。
 
 ## 项目简介
 
@@ -85,7 +85,8 @@ systemctl restart fail2ban
 ## 注意事项
 
 - `config.toml` 已 gitignore，修改后不会自动提交。参考 `config.toml.example`（注意：示例里的路径还是旧的 `/root/...`，实际部署在 `/home/wyw/homepage`，以 `web/app.py` 的 `DEFAULT_CONFIG` 和 `deploy/homepage.service` 为准）。
-- `data/` 和 `logs/` 目录已 gitignore。
+- `data/` 和 `logs/` 目录已 gitignore；`data/homepage.db.bak-*` 是手工备份，不影响运行。
+- `README.md` 已过时（还在描述废弃的单段 `/<key>` URL、`/root/miniconda3` 路径，依赖列表缺 flask-sock/websocket-client，且误称 admin 可在「我的」改密）。不要以它为准，以本文件和代码为准。
 - 新增路由的 key 不能与 `RESERVED_ROUTE_KEYS`（`api`、`static`、`login`、`logout`、`favicon.ico`、`health`）冲突。
 - 上游服务必须绑 `127.0.0.1`，直接对公网监听会绕过登录门。普通模式为完整原路径透传（`{IP}/tokyo/bill/x` → 上游 `/tokyo/bill/x`），上游需在 `/<machine>/<key>` 前缀下提供服务；否则用 `strip_prefix=1`（剥两段前缀，上游收到 `/x`）。
 - `routes_repo/` 是**未接入的半成品**：`app.py` 末尾的 `sys.modules["app"] = sys.modules["__main__"]` 及其注释提到的 `setup_routes_repo()` 在代码中并不存在，目录内容（如 `dice3d/`）也没有任何加载器引用。别去找不存在的实现——要么补上加载逻辑，要么把别名和注释一起删掉（无副作用）。
