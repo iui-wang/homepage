@@ -6,6 +6,7 @@
 """
 
 import argparse
+import ipaddress
 import os
 import re
 import sys
@@ -65,8 +66,10 @@ def identity_headers(user: dict) -> dict:
         "X-Forwarded-Admin": "1" if user["is_admin"] else "0",
     }
 
-# 上游请求超时（秒）。
-PROXY_TIMEOUT = 30
+# 反代连接超时与单次读取超时（秒）。响应体采用流式转发，下载大文件时不会因为
+# 整个传输超过此时长而中断；仅在连续 5 分钟收不到上游数据时才判定为超时。
+PROXY_CONNECT_TIMEOUT = 5
+PROXY_READ_TIMEOUT = 300
 
 # 机器监控：采样间隔（秒）、数据保留天数、可选时间窗（key -> 秒）。
 METRICS_INTERVAL = 10
@@ -87,8 +90,27 @@ sock = Sock(app)
 _AUTH_LOG_PATH = "/home/wyw/homepage/logs/auth.log"
 _SESSION_DAYS = db.DEFAULT_SESSION_DAYS
 
+# Homepage 只监听回环地址，唯一允许代传客户端地址的前置代理是本机 Caddy。
+# 不可对任意来源盲目信任 X-Forwarded-For，否则攻击者可伪造 IP 绕过 fail2ban。
+TRUSTED_PROXY_IPS = {"127.0.0.1", "::1"}
+
 
 # ---------------- 密码与鉴权工具 ----------------
+
+def client_ip() -> str:
+    """返回真实客户端 IP；仅信任本机 Caddy 注入的 X-Forwarded-For。"""
+    peer_ip = request.remote_addr or "-"
+    if peer_ip not in TRUSTED_PROXY_IPS:
+        return peer_ip
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    candidate = forwarded_for.split(",", 1)[0].strip()
+    if not candidate:
+        return peer_ip
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        logger.warning("忽略来自可信代理的非法 X-Forwarded-For：%r", forwarded_for)
+        return peer_ip
 
 def password_ok(pw: str) -> bool:
     """改密复杂度：超过 8 位，且含大小写字母、数字、特殊符号。"""
@@ -162,7 +184,7 @@ def maybe_log_active(username: str) -> None:
         return
     # URL 是 /<machine>/<key>/... 两级结构，记录前两段以保留服务信息。
     segs = "/" + "/".join(p.lstrip("/").split("/")[:2])
-    db.log_active(username, request.remote_addr or "-", request.method, segs)
+    db.log_active(username, client_ip(), request.method, segs)
 
 
 # ---------------- 机器监控采样 ----------------
@@ -256,7 +278,7 @@ def login():
     data = request.get_json(silent=True) or request.form
     username = (data.get("username") or "").strip()
     password = data.get("password") or ""
-    ip = request.remote_addr or "-"
+    ip = client_ip()
 
     user = db.get_user(username)
     if user is None or not check_password_hash(user["password_hash"], password):
@@ -544,7 +566,8 @@ def proxy(fullpath):
             headers=fwd_headers,
             data=request.get_data(),
             allow_redirects=False,
-            timeout=PROXY_TIMEOUT,
+            timeout=(PROXY_CONNECT_TIMEOUT, PROXY_READ_TIMEOUT),
+            stream=True,
         )
     except requests.RequestException as exc:
         logger.warning("上游不可达 route=%s/%s target=%s err=%s", machine, key, target, exc)
@@ -553,18 +576,38 @@ def proxy(fullpath):
             status=502,
         )
 
-    excluded = HOP_BY_HOP | {"content-encoding", "content-length"}
+    # requests 会自动解压带 Content-Encoding 的响应，此时保留上游的
+    # Content-Length 会与解压后的实体不一致；未压缩响应则必须透传长度。
+    # 例如豚鼠小屋的 BGM 加载条依赖 Content-Length 来计算下载进度。
+    excluded = HOP_BY_HOP | {"content-encoding"}
     upstream_base = f"http://{route['upstream_host']}:{route['upstream_port']}"
     out_headers = []
     for k, v in upstream.headers.items():
-        if k.lower() in excluded:
+        header_name = k.lower()
+        if header_name in excluded:
+            continue
+        if header_name == "content-length" and "content-encoding" in upstream.headers:
             continue
         # 上游若返回指向自身内网地址的重定向（如 Werkzeug 严格斜杠 308），改写成
         # 相对路径，避免把 127.0.0.1:端口 这种内网地址泄露给外部浏览器。
         if k.lower() == "location" and v.startswith(upstream_base):
             v = v[len(upstream_base):] or "/"
         out_headers.append((k, v))
-    return Response(upstream.content, status=upstream.status_code, headers=out_headers)
+    # 不要读取 upstream.content：那会让 HTTPS 门户先完整缓存附件，客户端一直
+    # 收不到首字节，也会把慢下载卡在固定超时里。逐块转发可保留 Range 的 206 /
+    # Content-Range 语义，手机的下载管理器才可在锁屏或断网后从已收位置续传。
+    def stream_upstream():
+        try:
+            yield from upstream.iter_content(chunk_size=64 * 1024)
+        finally:
+            upstream.close()
+
+    return Response(
+        stream_upstream(),
+        status=upstream.status_code,
+        headers=out_headers,
+        direct_passthrough=True,
+    )
 
 
 # ---------------- WebSocket 反向代理 ----------------
