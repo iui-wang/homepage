@@ -78,6 +78,13 @@ async function loadRoutes() {
     c.addEventListener("click", (e) => {
       const r = ROUTES.find((x) => x.key === c.dataset.key);
       if (!r || !r.machines.length) return;
+      // 上报卡片点击（排序用，fire-and-forget，不阻塞跳转、不当场重排）。
+      fetch("/api/track-click", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: r.key }),
+        keepalive: true,
+      }).catch(() => {});
       if (r.machines.length === 1) {
         location.href = "/" + r.machines[0].slug + "/" + r.key + "/";
       } else {

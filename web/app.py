@@ -13,6 +13,7 @@ import sys
 import threading
 import time
 import tomllib
+from collections import deque
 from datetime import datetime, timedelta
 from functools import wraps
 
@@ -78,6 +79,10 @@ METRICS_WINDOWS = {
     "1m": 60, "10m": 600, "30m": 1800, "1h": 3600,
     "3h": 10800, "1d": 86400, "3d": 259200, "7d": 604800,
 }
+
+# 卡片点击排序：滑动窗口时长（秒，72 小时）。点击记录存纯内存、不落库，
+# 进程重启后清零，卡片顺序恢复 routes.sort_order 次序。
+CLICK_WINDOW_SECONDS = 72 * 3600
 
 logger = get_logger("web")
 
@@ -313,12 +318,45 @@ def index():
     )
 
 
+# ---------------- 卡片点击排序 ----------------
+
+# 内存点击记录：username -> key -> 点击时间戳队列（滑动窗口见 CLICK_WINDOW_SECONDS）。
+# 请求线程与 WS pump 线程并发访问，统一走 _CLICKS_LOCK。
+_CLICKS: dict[str, dict[str, deque]] = {}
+_CLICKS_LOCK = threading.Lock()
+
+
+def record_click(username: str, key: str) -> None:
+    """记录一次卡片点击（时间戳入队，过期数据在读取时 prune）。"""
+    with _CLICKS_LOCK:
+        _CLICKS.setdefault(username, {}).setdefault(key, deque()).append(time.time())
+
+
+def click_counts(username: str) -> dict[str, int]:
+    """返回该用户各 key 在窗口内的点击次数，顺带 prune 过期时间戳。"""
+    cutoff = time.time() - CLICK_WINDOW_SECONDS
+    counts: dict[str, int] = {}
+    with _CLICKS_LOCK:
+        for key, dq in _CLICKS.get(username, {}).items():
+            while dq and dq[0] < cutoff:
+                dq.popleft()
+            if dq:
+                counts[key] = len(dq)
+    return counts
+
+
 # ---------------- 自身 API ----------------
 
 @app.route("/api/me")
 @login_required
 def api_me():
     routes = db.visible_routes_for(g.user["id"], g.user["is_admin"])
+    # 排序主关键字是窗口内点击数；list.sort 稳定排序，点击数相同时保持
+    # visible_routes_for 的原顺序（即 routes.sort_order），成为次关键字。
+    counts = click_counts(g.user["username"])
+    for r in routes:
+        r["clicks"] = counts.get(r["key"], 0)
+    routes.sort(key=lambda r: -r["clicks"])
     return jsonify(
         {
             "username": g.user["username"],
@@ -326,6 +364,19 @@ def api_me():
             "routes": routes,
         }
     )
+
+
+@app.route("/api/track-click", methods=["POST"])
+@login_required
+def api_track_click():
+    """前端卡片点击上报。只接受当前用户可见的路由 key，防乱刷。"""
+    data = request.get_json(silent=True) or {}
+    key = data.get("key") or ""
+    visible = {r["key"] for r in db.visible_routes_for(g.user["id"], g.user["is_admin"])}
+    if key not in visible:
+        return jsonify({"error": "未知路由"}), 400
+    record_click(g.user["username"], key)
+    return jsonify({"ok": True})
 
 
 @app.route("/api/change-password", methods=["POST"])
