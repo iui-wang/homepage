@@ -605,9 +605,14 @@ def proxy(fullpath):
         k: v
         for k, v in request.headers
         if k.lower() not in HOP_BY_HOP
-        and k.lower() not in ("host", "content-length")
+        and k.lower() not in ("host", "content-length", "accept-encoding")
         and k.lower() not in IDENTITY_HEADER_NAMES
     }
+    # 只向上游声明 gzip。若透传浏览器的 Accept-Encoding（含 br/zstd），上游
+    # （如 code-server）可能返回 brotli/zstd 压缩体，而本环境未装 brotli/
+    # zstandard，requests 解压不了；下方又会剔除 Content-Encoding 头，浏览器
+    # 收到的就是乱码二进制。
+    fwd_headers["Accept-Encoding"] = "gzip"
     fwd_headers.update(identity_headers(g.user))
 
     try:
