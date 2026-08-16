@@ -4,7 +4,7 @@ AI 智能体在本仓库工作时的项目说明，与代码保持一致，以�
 
 ## 项目简介
 
-反向代理路由门户：登录门 + 用户/路由管理 + 活跃记录 + 机器监控。Flask 后端 + 原生 JS SPA，SQLite 存储。它是所有上游服务（只监听内网）的唯一公网入口。代码在本机（东京腾讯云）维护，生产部署在上海阿里云：域名 ui-chan.cn，Caddy HTTPS :443 反代到本服务。
+反向代理路由门户：登录门 + 用户/路由管理 + 活跃记录 + 机器监控。Flask 后端 + 原生 JS SPA，SQLite 存储。它是所有上游服务（只监听内网）的唯一公网入口。代码在本机（联想 M720Q）维护，生产部署在上海阿里云：域名 ui-chan.cn，Caddy HTTPS :443 反代到本服务。
 
 ## 启动与运行
 
@@ -72,7 +72,6 @@ systemctl restart fail2ban
 - `config.toml`、`data/`、`logs/` 已 gitignore。`config.toml.example` 里的 `/root/...` 路径是旧的，实际部署在 `/home/wyw/homepage`，以 web/app.py 的 `DEFAULT_CONFIG` 和 deploy/homepage.service 为准。
 - 新增路由 key 不能撞 `RESERVED_ROUTE_KEYS`（web/db.py）。上游服务必须绑 `127.0.0.1`，直接对公网监听会绕过登录门。
 - `routes_repo/` 是未接入的半成品：app.py 末尾注释提到的 `setup_routes_repo()` 在代码中不存在，目录内容没有任何加载器引用；`sys.modules["app"]` 别名保留即可（无副作用）。
-- `web/` 下的 `web.log` 和 `web.log.2026-06-*` 是 logger 改绝对路径前的遗留文件，可安全删除；当前日志在 `web/logs/`。
 - 登录接口同时接受 JSON 和表单提交，curl 测试时两种都行。
 
 ## 操作文档
