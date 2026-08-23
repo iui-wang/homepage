@@ -28,7 +28,7 @@ tail -f logs/auth.log              # 登录失败记录，fail2ban 读它
 ```
 web/app.py      Flask 入口：登录/鉴权装饰器、管理 API、HTTP/WS 反向代理、监控采样
 web/db.py       SQLite schema 与读写（无 ORM，直接 sqlite3）
-web/logger.py   单例 logger；写 web/logs/（绝对路径，与 CWD 无关），LOG_DIR 环境变量可覆盖
+web/logger.py   单例 logger；写 web/logs/（绝对路径，与 CWD 无关），LOG_DIR 环境变量可覆盖；ERROR 及以上经 chat 告警机器人私聊 admin（10 分钟窗口最多 20 条，pytest 进程不挂该 handler）
 web/templates/  login.html、index.html（SPA）、forbidden/notfound/upstream_error.html
 web/static/     app.js（全部前端逻辑）、style.css、PWA 图标与 site.webmanifest
 config.toml     启动配置（secret_key、admin 密码、监听、路径，配置项见 config.toml.example）——已 gitignore
